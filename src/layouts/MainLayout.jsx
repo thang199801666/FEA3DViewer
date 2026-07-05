@@ -10,12 +10,21 @@ export default function MainLayout() {
     
     const workspaceRef = useRef(null);
     const sidebarRef = useRef(null);
+    const sceneContainerRef = useRef(null); // Ref để khóa cứng vùng 3D khi kéo
     const currentWidthRef = useRef(290); // Default CAD sidebar width
 
-    // Handler to initiate sidebar resizing
+    // Handler bắt đầu kéo: Khóa cứng chiều rộng hiện tại của Scene bằng Pixel cố định
     const startResizing = useCallback((e) => {
         e.preventDefault();
         setIsDragging(true);
+
+        if (sceneContainerRef.current) {
+            const currentRect = sceneContainerRef.current.getBoundingClientRect();
+            // Ép thẻ main lấy kích thước pixel cố định, chặn flexbox co giãn làm chớp tắt canvas
+            sceneContainerRef.current.style.width = `${currentRect.width}px`;
+            sceneContainerRef.current.style.flexGrow = "0";
+            sceneContainerRef.current.style.flexShrink = "0";
+        }
     }, []);
 
     // 1. Hotkeys Hook: Handles Ctrl+S (Save) and F11 (Toggle Fullscreen)
@@ -25,7 +34,6 @@ export default function MainLayout() {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
                 e.preventDefault();
                 // Put your custom serialization or data-saving logic here
-                // console.log("Workspace layout/mesh saved!");
             }
 
             // Fullscreen Hotkey: F11
@@ -49,7 +57,7 @@ export default function MainLayout() {
         return () => window.removeEventListener("keydown", handleGlobalHotkeys);
     }, []);
 
-    // 2. Dragging Hook: Listens to mouse movements ONLY while actively dragging the splitter
+    // 2. Dragging Hook: Điều chỉnh sidebar mượt mà, giữ nguyên trạng thái vùng 3D cho đến khi nhả chuột
     useEffect(() => {
         if (!isDragging) return;
 
@@ -68,16 +76,27 @@ export default function MainLayout() {
                 if (sidebarRef.current) {
                     sidebarRef.current.style.width = `${newWidth}px`;
                 }
-                
-                if (sceneController && typeof sceneController.onResize === "function") {
-                    sceneController.onResize();
-                }
             }
         };
 
         const stopDrag = () => {
             setIsDragging(false);
-            window.dispatchEvent(new Event('resize'));
+            
+            // KHI BUÔNG CHUỘT: Trả lại quyền tự động co giãn (Flexbox) cho vùng cảnh 3D
+            if (sceneContainerRef.current) {
+                sceneContainerRef.current.style.width = "auto";
+                sceneContainerRef.current.style.flexGrow = "1";
+                sceneContainerRef.current.style.flexShrink = "1";
+            }
+
+            // Kích hoạt cập nhật ma trận/viewport của engine 3D đúng một lần duy nhất
+            if (sceneController && typeof sceneController.onResize === "function") {
+                // Tạo một khoảng delay siêu ngắn (10ms) để DOM kịp hoàn tác chế độ Flexbox trước khi tính toán lại viewport
+                setTimeout(() => {
+                    sceneController.onResize();
+                    window.dispatchEvent(new Event('resize'));
+                }, 10);
+            }
         };
 
         window.addEventListener("mousemove", doDrag);
@@ -164,14 +183,19 @@ export default function MainLayout() {
                 />
 
                 {/* 3D Viewport container */}
-                <main className="scene-view-container" style={{ 
-                    flexGrow: 1, 
-                    flexShrink: 1,
-                    minWidth: 0,
-                    position: "relative",
-                    background: "#eef2f7", // Clean CAD canvas color block
-                    pointerEvents: isDragging ? "none" : "auto" 
-                }}>
+                <main 
+                    ref={sceneContainerRef}
+                    className="scene-view-container" 
+                    style={{ 
+                        flexGrow: 1, 
+                        flexShrink: 1,
+                        minWidth: 0,
+                        position: "relative",
+                        background: "#eef2f7", // Clean CAD canvas color block
+                        pointerEvents: isDragging ? "none" : "auto",
+                        overflow: "hidden"
+                    }}
+                >
                     <Scene onControllerReady={setSceneController} />
                 </main>
                 

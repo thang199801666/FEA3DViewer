@@ -3,7 +3,7 @@ import * as THREE from "three";
 export default class SceneController {
     constructor(camera, cameraController = null) {
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x3b3b3b);
+        this.scene.background = new THREE.Color(0xffffff);
 
         this.camera = camera;
         this.cameraController = cameraController;
