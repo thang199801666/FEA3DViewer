@@ -18,8 +18,11 @@ export class PickingController {
     this.originalColors = new Map();
 
     // Định nghĩa bảng màu Highlight CAD chuẩn theo yêu cầu
-    this.hoverColor = new THREE.Color(0xffb366);  // Cam nhạt khi hover
-    this.selectColor = new THREE.Color(0xff9999); // Đỏ nhạt khi được chọn
+    this.hoverColor = new THREE.Color(0xffb366);  // Cam nhạt khi hover (surface)
+    this.selectColor = new THREE.Color(0xff9999); // Đỏ nhạt khi được chọn (surface)
+    this.hoverEdgeColor = new THREE.Color(0xe65c00);  // Cam đậm cho Feature Edges khi hover
+    this.selectEdgeColor = new THREE.Color(0xb30000); // Đỏ đậm cho Feature Edges khi select
+    this.defaultEdgeColor = new THREE.Color(0x111111); // Màu Feature Edges mặc định
 
     // Ngưỡng góc mặc định để hiển thị cạnh sắc CAD (20 độ)
     this.defaultEdgeAngle = 20;
@@ -85,10 +88,7 @@ export class PickingController {
 
       if (targetActor && this.hoveredActor !== targetActor) {
         this._clearHover();
-        // Nếu Actor này chưa được Select thì mới tiến hành Highlight hover
-        if (targetActor !== this.selectedActor) {
-          this._setHover(targetActor);
-        }
+        this._setHover(targetActor);
       }
     } else {
       this._clearHover();
@@ -167,33 +167,40 @@ export class PickingController {
   }
 
   /**
-   * Thiết lập trạng thái Hover (Cam nhạt)
+   * Thiết lập trạng thái Hover
+   * - Actor thường: Surface -> Cam nhạt, Edge -> Cam đậm
+   * - Actor đang được Select: giữ nguyên Surface đỏ nhạt, chỉ đổi Edge -> Cam đậm
    */
   _setHover(actor) {
     this.hoveredActor = actor;
-    this._applyColorToActor(actor, this.hoverColor);
+
+    if (actor !== this.selectedActor) {
+      this._applyColorToActor(actor, this.hoverColor);
+    }
+    this._setActorEdgeColor(actor, this.hoverEdgeColor);
   }
 
   /**
    * Xóa trạng thái Hover
+   * - Nếu Actor đang được Select: giữ nguyên Surface đỏ nhạt, trả Edge về đỏ đậm (màu Select)
+   * - Ngược lại: trả cả Surface và Edge về màu gốc/mặc định
    */
   _clearHover() {
     if (!this.hoveredActor) return;
     const actor = this.hoveredActor;
 
-    // Nếu Actor này đang được chọn (Selected), trả lại màu Đỏ nhạt
     if (actor === this.selectedActor) {
-      this._applyColorToActor(actor, this.selectColor);
+      this._setActorEdgeColor(actor, this.selectEdgeColor);
     } else {
-      // Ngược lại, trả về màu gốc (cạnh sắc vẫn luôn hiển thị)
       this._resetActorColor(actor);
+      this._setActorEdgeColor(actor, this.defaultEdgeColor);
     }
 
     this.hoveredActor = null;
   }
 
   /**
-   * Thiết lập trạng thái Select (Đỏ nhạt)
+   * Thiết lập trạng thái Select (Surface -> Đỏ nhạt, Edge -> Đỏ đậm)
    */
   _setSelect(actor) {
     // Xóa trạng thái hover hiện tại và giải phóng Actor cũ đang chọn (nếu có)
@@ -202,6 +209,7 @@ export class PickingController {
 
     this.selectedActor = actor;
     this._applyColorToActor(actor, this.selectColor);
+    this._setActorEdgeColor(actor, this.selectEdgeColor);
   }
 
   /**
@@ -212,7 +220,18 @@ export class PickingController {
     const actor = this.selectedActor;
 
     this._resetActorColor(actor);
+    this._setActorEdgeColor(actor, this.defaultEdgeColor);
     this.selectedActor = null;
+  }
+
+  /**
+   * Đổi màu Feature Edges của Actor (nếu tồn tại) và yêu cầu render lại khung hình
+   */
+  _setActorEdgeColor(actor, color) {
+    if (actor && typeof actor.setEdgeColor === 'function') {
+      actor.setEdgeColor(color);
+      this._requestSceneRender();
+    }
   }
 
   /**

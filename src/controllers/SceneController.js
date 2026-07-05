@@ -2,9 +2,12 @@ import * as THREE from "three";
 import { Actor } from "../models/Actor";
 
 export default class SceneController {
-    constructor(camera, cameraController = null) {
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0xffffff);
+    constructor(camera, cameraController = null, externalScene = null) {
+        // Nếu có scene dùng chung truyền vào từ MainLayout thì dùng, ngược lại mới tạo mới
+        this.scene = externalScene || new THREE.Scene();
+        if (!externalScene) {
+            this.scene.background = new THREE.Color(0xffffff);
+        }
 
         this.camera = camera;
         this.cameraController = cameraController;
@@ -16,12 +19,13 @@ export default class SceneController {
     }
 
     initialize() {
-        this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 
+        const hasAmbient = this.scene.children.some(child => child.isAmbientLight);
+        if (hasAmbient) return;
+        this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
         const light1 = new THREE.DirectionalLight(0xffffff, 2);
         light1.position.set(15, 20, 15);
         this.scene.add(light1);
-
         const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
         light2.position.set(-10, -10, -10);
         this.scene.add(light2);
@@ -29,7 +33,6 @@ export default class SceneController {
 
     /**
      * Tạo một Actor dạng khối hộp (Box) mặc định và thêm ngay vào Scene.
-     * @param {object} options Tùy chọn kích thước/màu/vị trí cho box mới.
      */
     addBoxActor(options = {}) {
         if (!this.scene) return null;
@@ -52,8 +55,6 @@ export default class SceneController {
 
         const actor = new Actor(geometry, material, name);
 
-        // Nếu không truyền vị trí cụ thể, xếp box mới cạnh các box đã có
-        // để tránh chồng lấn hoàn toàn lên nhau.
         if (position) {
             actor.position.set(position.x ?? 0, position.y ?? 0, position.z ?? 0);
         } else {
@@ -77,12 +78,10 @@ export default class SceneController {
         this.scene.updateMatrixWorld(true);
 
         this.scene.traverse((child) => {
-            // Loại trừ Grid hệ thống dựa vào tên định danh hoặc kiểu lớp đối tượng
             if (child === this.scene || child.name === "system_grid" || child.isGridHelper) {
                 return;
             }
 
-            // Chỉ tính toán giới hạn không gian dựa trên các đối tượng hình học thực tế (Mesh)
             if (child.isMesh) {
                 if (!child.geometry.boundingBox) {
                     child.geometry.computeBoundingBox();
@@ -139,30 +138,20 @@ export default class SceneController {
     updateClipping() {
         if (!this.cameraController || !this.scene) return;
 
-        // 1. Tính toán box tinh khiết của Model (đã loại trừ system_grid)
         const box = this._calculateModelBounds();
         if (box.isEmpty()) return;
 
         const sphere = box.getBoundingSphere(new THREE.Sphere());
-        
-        // 2. GIẢI PHÁP ĐỘNG: Lấy giá trị zoom hiện tại của camera (mặc định là 1 nếu không có)
         const currentZoom = (this.camera && this.camera.zoom) ? this.camera.zoom : 1;
-
-        // Định nghĩa kích thước cơ sở của Grid (ví dụ bạn đặt lưới kích thước 2000)
         const baseGridSize = 2000; 
 
-        // Khi zoom out (currentZoom giảm dần về 0.1, 0.01...), ta lấy kích thước lưới 
-        // chia cho currentZoom để nới rộng bán kính khối cầu bao phủ một cách vô hạn.
         const dynamicRadius = Math.max(sphere.radius * 3.0, baseGridSize / currentZoom);
-
         sphere.radius = dynamicRadius;
 
-        // 3. Đẩy thông số khối cầu đã nới rộng sang cho bộ điều khiển camera tính near/far
         this.cameraController.setBoundingSphere(sphere);
         
-        // 4. Ép ma trận trực giao của camera mở rộng khoảng cắt tuyệt đối ở tầng cấu hình
         if (this.camera && typeof this.camera.updateProjectionMatrix === "function") {
-            this.camera.near = -dynamicRadius; // Cho phép hiển thị cả các vật thể phía sau camera khi trực giao
+            this.camera.near = -dynamicRadius; 
             this.camera.far = dynamicRadius * 2;
             this.camera.updateProjectionMatrix();
         }

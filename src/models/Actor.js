@@ -17,6 +17,7 @@ export class Actor extends THREE.Group {
     // 2. Khởi tạo Edge (Đường cạnh sắc) dưới dạng null, chỉ tính toán khi được bật
     this.edges = null;
     this.defaultThresholdAngle = 20; // Góc mặc định 20 độ
+    this.defaultEdgeColor = 0x111111; // Màu cạnh sắc mặc định khi không hover/select
 
     // Luôn hiển thị Feature Edges mặc định, không phụ thuộc hover/select
     this.showFeatureEdges();
@@ -41,7 +42,7 @@ export class Actor extends THREE.Group {
 
     // Tạo vật liệu cho đường nét CAD mảnh nhưng sắc nét
     const lineMaterial = new LineMaterial({
-      color: 0x111111,       // Màu đen hoặc xám đậm cho cạnh sắc CAD
+      color: this.defaultEdgeColor, // Màu đen hoặc xám đậm cho cạnh sắc CAD
       linewidth: 1.5,        // Độ dày nét vẽ (tính theo pixel)
       dashed: false,
     });
@@ -76,6 +77,16 @@ export class Actor extends THREE.Group {
     if (this.edges.material) this.edges.material.dispose();
     
     this.edges = null;
+  }
+
+  /**
+   * Đổi màu cho đường Feature Edges hiện tại (dùng cho hiệu ứng hover/select)
+   * @param {number|string|THREE.Color} color Màu mới cần áp dụng
+   */
+  setEdgeColor(color) {
+    if (this.edges && this.edges.material) {
+      this.edges.material.color.set(color);
+    }
   }
 
   /**

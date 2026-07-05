@@ -13,7 +13,7 @@ export default function MainLayout() {
     const [isDragging, setIsDragging] = useState(false);
     
     // --- Các trạng thái hiển thị thanh công cụ ---
-    const [showTextBlock, setShowTextBlock] = useState(false); // Mặc định ẩn Text Block khi mở app lần đầu
+    const [showTextBlock, setShowTextBlock] = useState(false); 
     const [showAxes, setShowAxes] = useState(true);
     const [showRuler, setShowRuler] = useState(true);
     const [showGrid, setShowGrid] = useState(false); 
@@ -22,6 +22,12 @@ export default function MainLayout() {
     const sidebarRef = useRef(null);
     const sceneContainerRef = useRef(null); 
     const currentWidthRef = useRef(290); 
+
+    // TẠO SCENE DÙNG CHUNG CHO CẢ 2 VIEWPORTS
+    const sharedSceneRef = useRef(new THREE.Scene());
+    useEffect(() => {
+        sharedSceneRef.current.background = new THREE.Color(0xffffff);
+    }, []);
 
     const startResizing = useCallback((e) => {
         e.preventDefault();
@@ -103,6 +109,7 @@ export default function MainLayout() {
         };
     }, [isDragging, sceneController1, sceneController2]);
 
+    // LẮNG NGHE IS_SPLIT ĐỂ ĐỒNG BỘ CAMERA KHI VỪA KHỞI CHẠY VIEWPORT 2
     useEffect(() => {
         const timer = setTimeout(() => {
             if (sceneController1 && typeof sceneController1.onResize === "function") {
@@ -112,6 +119,24 @@ export default function MainLayout() {
                 sceneController2.onResize();
             }
             window.dispatchEvent(new Event('resize'));
+
+            // Nếu chế độ Split hoạt động và cả 2 controller đã sẵn sàng
+            if (isSplit && sceneController1 && sceneController2) {
+                const camCtrl1 = sceneController1.cameraController;
+                const camCtrl2 = sceneController2.cameraController;
+
+                if (camCtrl1 && camCtrl2) {
+                    // Ép camera 2 copy nguyên trạng thái (Vị trí, hướng xoay) từ camera 1
+                    camCtrl2.state.copy(camCtrl1.state);
+                    camCtrl2.camera.zoom = camCtrl1.camera.zoom;
+                    camCtrl2.camera.updateProjectionMatrix();
+
+                    // Yêu cầu bộ điều khiển camera 2 cập nhật lại ma trận hiển thị lập tức
+                    if (typeof camCtrl2._applyStateToCamera === "function") camCtrl2._applyStateToCamera();
+                    if (typeof camCtrl2._updateClipping === "function") camCtrl2._updateClipping();
+                    if (typeof camCtrl2._requestRender === "function") camCtrl2._requestRender();
+                }
+            }
         }, 50);
 
         return () => clearTimeout(timer);
@@ -198,6 +223,8 @@ export default function MainLayout() {
                     {/* Viewport 1 */}
                     <div style={{ flex: "1 1 50%", width: isSplit ? "50%" : "100%", height: "100%", position: "relative", borderRight: isSplit ? "2px solid #bbb" : "none", boxSizing: "border-box" }}>
                         <Scene 
+                            viewportIndex={1}
+                            sharedScene={sharedSceneRef.current}
                             onControllerReady={setSceneController1} 
                             showTextBlock={showTextBlock}
                             showAxes={showAxes}
@@ -211,6 +238,8 @@ export default function MainLayout() {
                     {isSplit && (
                         <div style={{ flex: "1 1 50%", width: "50%", height: "100%", position: "relative", boxSizing: "border-box" }}>
                             <Scene 
+                                viewportIndex={2}
+                                sharedScene={sharedSceneRef.current}
                                 onControllerReady={setSceneController2} 
                                 showTextBlock={showTextBlock}
                                 showAxes={showAxes}

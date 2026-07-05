@@ -8,21 +8,26 @@ import TextBlockController      from "../controllers/TextBlockController";
 import MeasurementController    from "../controllers/MeasurementController";
 import OrientationTriad         from "./OrientationTriad";
 
-export default function Scene({ onControllerReady, showTextBlock = false, showAxes = true, showRuler = true, showGrid = false }) {
+export default function Scene({ 
+    viewportIndex = 1, 
+    sharedScene, 
+    onControllerReady, 
+    showTextBlock = false, 
+    showAxes = true, 
+    showRuler = true, 
+    showGrid = false 
+}) {
     const containerRef = useRef();
     
-    // Lưu các phần tử DOM thông qua Refs để chỉnh style trực tiếp
     const textBlockRef = useRef(null);
     const rulerRef = useRef(null);
 
-    // Dùng Refs để tránh re-init Three.js canvas khi ấn nút trên Toolbar
     const showAxesRef = useRef(showAxes);
     const showGridRef = useRef(showGrid);
 
     useEffect(() => { showAxesRef.current = showAxes; }, [showAxes]);
     useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
 
-    // Lắng nghe thay đổi trực tiếp để ẩn hiện DOM
     useEffect(() => {
         if (textBlockRef.current) textBlockRef.current.style.display = showTextBlock ? "block" : "none";
     }, [showTextBlock]);
@@ -33,7 +38,7 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
 
     useEffect(() => {
         const container = containerRef.current;
-        if (!container) return;
+        if (!container || !sharedScene) return;
 
         const triadConfig = { position: "bottom-left", size: 120 };
         const padding = 20;          
@@ -53,14 +58,19 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
         );
         camera.position.set(10, 10, 10);
 
-        const sceneController = new SceneController(camera);
+        // CẤU HÌNH LAYER CHO CAMERA: Layer 0 cho các Actor chung, Layer viewportIndex cho Grid riêng biệt
+        camera.layers.enable(0);
+        camera.layers.enable(viewportIndex);
+
+        // Khởi tạo SceneController sử dụng chung sharedScene nhận từ MainLayout
+        const sceneController = new SceneController(camera, null, sharedScene);
         sceneController.camera = camera;
 
-        // --- HỆ THỐNG LƯỚI ĐÔI ADAPTIVE CAD GRID (MẶT PHẲNG X-Z) ---
-        // 1. Lưới chính (Major Grid) - Phân chia khoảng lớn nét đậm
+        // --- HỆ THỐNG LƯỚI ĐÔI ADAPTIVE CAD GRID ---
         const majorGrid = new THREE.GridHelper(2000, 200, 0x444444, 0x888888); 
         majorGrid.name = "system_grid";
         majorGrid.frustumCulled = false;
+        majorGrid.layers.set(viewportIndex); // Chỉ hiển thị lưới này trên camera của viewport hiện tại
         majorGrid.material.transparent = true;
         majorGrid.material.opacity = 0.5;
         majorGrid.material.depthWrite = true;
@@ -69,13 +79,12 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
         majorGrid.material.polygonOffsetUnits = 1;
         sceneController.scene.add(majorGrid);
 
-        // 2. Lưới phụ (Minor Grid) - TĂNG PHÂN ĐOẠN LÊN 2000 ĐỂ Ô LƯỚI MỊN HƠN 2 LẦN
-        // (Nếu muốn mịn nữa, bạn có thể tăng hẳn lên 4000)
         const minorGrid = new THREE.GridHelper(2000, 2000, 0x999999, 0xcccccc);
         minorGrid.name = "system_grid";
         minorGrid.frustumCulled = false;
+        minorGrid.layers.set(viewportIndex); // Chỉ hiển thị lưới này trên camera của viewport hiện tại
         minorGrid.material.transparent = true;
-        minorGrid.material.opacity = 0.25; // Tăng nhẹ opacity để nhìn rõ lưới mịn hơn
+        minorGrid.material.opacity = 0.25; 
         minorGrid.material.depthWrite = true;
         minorGrid.material.polygonOffset = true;
         minorGrid.material.polygonOffsetFactor = 1.1;
@@ -122,7 +131,6 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
 
         const measurementController = new MeasurementController(rulerContainer, camera);
 
-        // Tạo Khối định hướng Triad axes
         const triad = new OrientationTriad(renderer);
         const cameraController = new CameraController(camera, renderer.domElement, {
             autoResize: false,
@@ -173,9 +181,6 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
                 const zoom = camera.zoom || 1;
                 const exponent = Math.floor(Math.log10(1 / zoom));
                 const majorScale = Math.pow(10, exponent);
-                
-                // CẬP NHẬT: Vì mật độ phân đoạn khởi tạo của minorGrid (2000) 
-                // đang gấp 10 lần majorGrid (200), ta giữ nguyên tỷ lệ scale là 1
                 const minorScale = majorScale; 
 
                 majorGrid.scale.set(majorScale, 1, majorScale);
@@ -209,10 +214,17 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
             textBlockController.dispose();
             measurementController.dispose();
             pickingController.dispose();
+
+            // Xóa lưới cục bộ khỏi scene dùng chung trước khi unmount
+            if (sceneController.scene) {
+                sceneController.scene.remove(majorGrid);
+                sceneController.scene.remove(minorGrid);
+            }
+
             if (container.contains(textBlockContainer)) container.removeChild(textBlockContainer);
             if (container.contains(rulerContainer)) container.removeChild(rulerContainer);
         };
-    }, [onControllerReady]); 
+    }, [onControllerReady, sharedScene, viewportIndex]); 
 
     return <div ref={containerRef} className="scene-container" style={{ width: "100%", height: "100%", position: "relative" }} />;
 }
