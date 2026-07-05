@@ -233,24 +233,33 @@ export class MouseController {
     const c = this.controller;
     const rect = this.domElement.getBoundingClientRect();
     
-    // Định nghĩa góc xoay tối đa khi người dùng kéo chuột hết một chiều màn hình.
-    // Thường kéo hết chiều rộng màn hình (rect.width) tương ứng xoay 180 độ (Math.PI)
-    // Bạn có thể nhân thêm với `this.rotateSpeed` để người dùng tinh chỉnh nếu muốn.
     const sensitivity = 1.0; 
     const angleX = (dx / rect.width) * Math.PI * sensitivity * this.rotateSpeed;
     const angleY = (dy / rect.height) * Math.PI * sensitivity * this.rotateSpeed;
 
-    // Lấy các trục tọa độ hiện tại của camera
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(c.state.quaternion);
+    // 1. Lấy trạng thái quaternion hiện tại của camera
+    const currentQ = c.state.quaternion.clone();
+
+    // 2. Tính toán cấu thành Pitch (Xoay lên/xuống quanh trục X cục bộ của camera)
+    const localRight = new THREE.Vector3(1, 0, 0);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(localRight, -angleY);
+
+    // 3. Tính toán cấu thành Yaw (Xoay trái/phải quanh trục Y của thế giới)
     const worldUp = new THREE.Vector3(0, 1, 0);
-
-    // Di chuyển chuột ngang (dx) -> xoay quanh trục đứng thế giới (worldUp)
     const qYaw = new THREE.Quaternion().setFromAxisAngle(worldUp, -angleX);
-    // Di chuyển chuột dọc (dy) -> xoay quanh trục ngang của camera (right)
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(right, -angleY);
-    const qDelta = qYaw.multiply(qPitch);
 
-    CameraMath.orbit(c.state, qDelta);
+    // 4. Tổ hợp chính xác theo thứ tự ma trận tích: 
+    // Áp dụng Pitch lên camera trước (currentQ * qPitch), sau đó áp dụng Yaw toàn cục lên kết quả (qYaw * ...)
+    const targetQ = new THREE.Quaternion()
+      .copy(qYaw)
+      .multiply(currentQ)
+      .multiply(qPitch)
+      .normalize();
+
+    // 5. Cập nhật trực tiếp vào state thay vì dùng `CameraMath.orbit(c.state, qDelta)` cũ
+    c.state.quaternion.copy(targetQ);
+    CameraMath.applyQuaternionToEye(c.state); 
+    
     c._afterStateChange();
   }
 

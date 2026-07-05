@@ -3,48 +3,50 @@ import Toolbar from "../layouts/Toolbar";
 import Scene from "../viewer/Scene";
 import Sidebar from "./Sidebar";
 import StatusBar from "./StatusBar";
+import * as THREE from "three";
 
 export default function MainLayout() {
-    const [sceneController, setSceneController] = useState(null);
+    const [sceneController1, setSceneController1] = useState(null);
+    const [sceneController2, setSceneController2] = useState(null);
+    const [isSplit, setIsSplit] = useState(false);
+    const [isViewLinked, setIsViewLinked] = useState(true);
     const [isDragging, setIsDragging] = useState(false);
+    
+    // --- Các trạng thái hiển thị thanh công cụ ---
+    const [showTextBlock, setShowTextBlock] = useState(false); // Mặc định ẩn Text Block khi mở app lần đầu
+    const [showAxes, setShowAxes] = useState(true);
+    const [showRuler, setShowRuler] = useState(true);
+    const [showGrid, setShowGrid] = useState(false); 
     
     const workspaceRef = useRef(null);
     const sidebarRef = useRef(null);
-    const sceneContainerRef = useRef(null); // Ref để khóa cứng vùng 3D khi kéo
-    const currentWidthRef = useRef(290); // Default CAD sidebar width
+    const sceneContainerRef = useRef(null); 
+    const currentWidthRef = useRef(290); 
 
-    // Handler bắt đầu kéo: Khóa cứng chiều rộng hiện tại của Scene bằng Pixel cố định
     const startResizing = useCallback((e) => {
         e.preventDefault();
         setIsDragging(true);
 
         if (sceneContainerRef.current) {
             const currentRect = sceneContainerRef.current.getBoundingClientRect();
-            // Ép thẻ main lấy kích thước pixel cố định, chặn flexbox co giãn làm chớp tắt canvas
             sceneContainerRef.current.style.width = `${currentRect.width}px`;
             sceneContainerRef.current.style.flexGrow = "0";
             sceneContainerRef.current.style.flexShrink = "0";
         }
     }, []);
 
-    // 1. Hotkeys Hook: Handles Ctrl+S (Save) and F11 (Toggle Fullscreen)
     useEffect(() => {
         const handleGlobalHotkeys = async (e) => {
-            // Save Hotkey: Ctrl+S or Cmd+S
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
                 e.preventDefault();
-                // Put your custom serialization or data-saving logic here
             }
 
-            // Fullscreen Hotkey: F11
             if (e.key === "F11") {
-                e.preventDefault(); // Stop native browser window fullscreen zoom
-
+                e.preventDefault();
                 try {
                     if (document.fullscreenElement) {
                         await document.exitFullscreen();
                     } else {
-                        // Requests fullscreen for the whole app workspace
                         await document.documentElement.requestFullscreen();
                     }
                 } catch (err) {
@@ -57,7 +59,6 @@ export default function MainLayout() {
         return () => window.removeEventListener("keydown", handleGlobalHotkeys);
     }, []);
 
-    // 2. Dragging Hook: Điều chỉnh sidebar mượt mà, giữ nguyên trạng thái vùng 3D cho đến khi nhả chuột
     useEffect(() => {
         if (!isDragging) return;
 
@@ -66,13 +67,11 @@ export default function MainLayout() {
 
             const workspaceRect = workspaceRef.current.getBoundingClientRect();
             const newWidth = e.clientX - workspaceRect.left;
-
             const minAllowedWidth = 200;
             const maxAllowedWidth = 500; 
 
             if (newWidth >= minAllowedWidth && newWidth <= maxAllowedWidth) {
                 currentWidthRef.current = newWidth;
-                
                 if (sidebarRef.current) {
                     sidebarRef.current.style.width = `${newWidth}px`;
                 }
@@ -82,21 +81,17 @@ export default function MainLayout() {
         const stopDrag = () => {
             setIsDragging(false);
             
-            // KHI BUÔNG CHUỘT: Trả lại quyền tự động co giãn (Flexbox) cho vùng cảnh 3D
             if (sceneContainerRef.current) {
                 sceneContainerRef.current.style.width = "auto";
                 sceneContainerRef.current.style.flexGrow = "1";
                 sceneContainerRef.current.style.flexShrink = "1";
             }
 
-            // Kích hoạt cập nhật ma trận/viewport của engine 3D đúng một lần duy nhất
-            if (sceneController && typeof sceneController.onResize === "function") {
-                // Tạo một khoảng delay siêu ngắn (10ms) để DOM kịp hoàn tác chế độ Flexbox trước khi tính toán lại viewport
-                setTimeout(() => {
-                    sceneController.onResize();
-                    window.dispatchEvent(new Event('resize'));
-                }, 10);
-            }
+            setTimeout(() => {
+                if (sceneController1 && typeof sceneController1.onResize === "function") sceneController1.onResize();
+                if (sceneController2 && typeof sceneController2.onResize === "function") sceneController2.onResize();
+                window.dispatchEvent(new Event('resize'));
+            }, 30);
         };
 
         window.addEventListener("mousemove", doDrag);
@@ -106,104 +101,130 @@ export default function MainLayout() {
             window.removeEventListener("mousemove", doDrag);
             window.removeEventListener("mouseup", stopDrag);
         };
-    }, [isDragging, sceneController]);
+    }, [isDragging, sceneController1, sceneController2]);
 
-    // 3. Fullscreen Canvas Adjuster: Fires when entering/leaving full screen to let WebGL handle container shifts
     useEffect(() => {
-        const handleFullscreenResize = () => {
-            if (sceneController && typeof sceneController.onResize === "function") {
-                sceneController.onResize();
+        const timer = setTimeout(() => {
+            if (sceneController1 && typeof sceneController1.onResize === "function") {
+                sceneController1.onResize();
             }
+            if (sceneController2 && typeof sceneController2.onResize === "function") {
+                sceneController2.onResize();
+            }
+            window.dispatchEvent(new Event('resize'));
+        }, 50);
+
+        return () => clearTimeout(timer);
+    }, [isSplit, sceneController1, sceneController2]);
+
+    useEffect(() => {
+        if (!isSplit || !isViewLinked || !sceneController1 || !sceneController2) return;
+
+        const camCtrl1 = sceneController1.cameraController;
+        const camCtrl2 = sceneController2.cameraController;
+        if (!camCtrl1 || !camCtrl2) return;
+
+        let isSyncing = false;
+
+        const syncCameras = (sourceCtrl, targetCtrl) => {
+            if (isSyncing) return;
+            isSyncing = true;
+
+            targetCtrl.state.copy(sourceCtrl.state);
+            targetCtrl.camera.zoom = sourceCtrl.camera.zoom;
+            targetCtrl.camera.updateProjectionMatrix();
+
+            targetCtrl._applyStateToCamera();
+            targetCtrl._updateClipping();
+            targetCtrl._requestRender();
+
+            isSyncing = false;
         };
 
-        document.addEventListener("fullscreenchange", handleFullscreenResize);
-        return () => document.removeEventListener("fullscreenchange", handleFullscreenResize);
-    }, [sceneController]);
+        const handleCam1Change = () => syncCameras(camCtrl1, camCtrl2);
+        const handleCam2Change = () => syncCameras(camCtrl2, camCtrl1);
+
+        camCtrl1.addEventListener?.('change', handleCam1Change);
+        camCtrl2.addEventListener?.('change', handleCam2Change);
+
+        handleCam1Change();
+
+        return () => {
+            camCtrl1.removeEventListener?.('change', handleCam1Change);
+            camCtrl2.removeEventListener?.('change', handleCam2Change);
+        };
+    }, [isSplit, isViewLinked, sceneController1, sceneController2]);
 
     return (
         <div className="main-layout" style={{ 
-            display: "flex", 
-            flexDirection: "column", 
-            height: "100vh", 
-            width: "100vw",
-            background: "#f3f3f3", // SpaceClaim inspired clean workspace background
-            fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
-            overflow: "hidden",
-            userSelect: isDragging ? "none" : "auto" 
+            display: "flex", flexDirection: "column", height: "100vh", width: "100vw",
+            background: "#f3f3f3", fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
+            overflow: "hidden", userSelect: isDragging ? "none" : "auto" 
         }}>
             
-            {/* SpaceClaim Ribbon / Header */}
-            <Toolbar sceneController={sceneController} />
+            <Toolbar 
+                sceneController={sceneController1} 
+                isSplit={isSplit} 
+                onToggleSplit={() => setIsSplit(!isSplit)} 
+                isViewLinked={isViewLinked}
+                onToggleViewLink={() => setIsViewLinked((v) => !v)}
+                showTextBlock={showTextBlock}
+                onToggleTextBlock={() => setShowTextBlock(!showTextBlock)}
+                showAxes={showAxes}
+                onToggleAxes={() => setShowAxes(!showAxes)}
+                showRuler={showRuler}
+                onToggleRuler={() => setShowRuler(!showRuler)}
+                showGrid={showGrid}
+                onToggleGrid={() => setShowGrid(!showGrid)}
+            />
             
-            {/* Main Content Area */}
-            <div 
-                ref={workspaceRef}
-                className="workspace-container" 
-                style={{ 
-                    display: "flex", 
-                    flexGrow: 1, 
-                    minHeight: 0,
-                    width: "100%",
-                    position: "relative"
-                }}
-            >
+            <div ref={workspaceRef} className="workspace-container" style={{ display: "flex", flexGrow: 1, minHeight: 0, width: "100%", position: "relative" }}>
                 
-                {/* Left Stacked Sidebar (Structure Tree + Properties) */}
-                <aside 
-                    ref={sidebarRef}
-                    style={{ 
-                        width: `${currentWidthRef.current}px`, 
-                        minWidth: 0,
-                        flexShrink: 0,
-                        background: "#fcfcfc", 
-                        borderRight: "1px solid #d0d0d0",
-                        display: "flex",
-                        flexDirection: "column",
-                        overflow: "hidden"
-                    }}
-                >
-                    <Sidebar sceneController={sceneController} />
+                <aside ref={sidebarRef} style={{ width: `${currentWidthRef.current}px`, minWidth: 0, flexShrink: 0, background: "#fcfcfc", borderRight: "1px solid #d0d0d0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <Sidebar sceneController={sceneController1} />
                 </aside>
 
-                {/* Vertical Workspace Splitter */}
-                <div
-                    className="sidebar-splitter"
-                    onMouseDown={startResizing}
-                    style={{
-                        width: "4px",
-                        cursor: "col-resize",
-                        background: isDragging ? "#007acc" : "transparent",
-                        zIndex: 10,
-                        position: "relative",
-                        flexShrink: 0,
-                        transition: "background 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => { if (!isDragging) e.currentTarget.style.background = "#e0e0e0"; }}
-                    onMouseLeave={(e) => { if (!isDragging) e.currentTarget.style.background = "transparent"; }}
-                />
+                <div className="sidebar-splitter" onMouseDown={startResizing} style={{ width: "4px", cursor: "col-resize", background: isDragging ? "#007acc" : "transparent", zIndex: 10, position: "relative", flexShrink: 0, transition: "background 0.15s ease" }} onMouseEnter={(e) => { if (!isDragging) e.currentTarget.style.background = "#e0e0e0"; }} onMouseLeave={(e) => { if (!isDragging) e.currentTarget.style.background = "transparent"; }} />
 
-                {/* 3D Viewport container */}
                 <main 
                     ref={sceneContainerRef}
                     className="scene-view-container" 
                     style={{ 
-                        flexGrow: 1, 
-                        flexShrink: 1,
-                        minWidth: 0,
-                        position: "relative",
-                        background: "#eef2f7", // Clean CAD canvas color block
-                        pointerEvents: isDragging ? "none" : "auto",
-                        overflow: "hidden"
+                        flexGrow: 1, flexShrink: 1, minWidth: 0, position: "relative",
+                        background: "#eef2f7", pointerEvents: isDragging ? "none" : "auto",
+                        overflow: "hidden", display: "flex", flexDirection: "row"
                     }}
                 >
-                    <Scene onControllerReady={setSceneController} />
+                    {/* Viewport 1 */}
+                    <div style={{ flex: "1 1 50%", width: isSplit ? "50%" : "100%", height: "100%", position: "relative", borderRight: isSplit ? "2px solid #bbb" : "none", boxSizing: "border-box" }}>
+                        <Scene 
+                            onControllerReady={setSceneController1} 
+                            showTextBlock={showTextBlock}
+                            showAxes={showAxes}
+                            showRuler={showRuler}
+                            showGrid={showGrid}
+                        />
+                        {isSplit && <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', fontSize: 11, borderRadius: 3, pointerEvents: 'none', fontWeight: 600, zIndex: 100 }}>Viewport 1</div>}
+                    </div>
+
+                    {/* Viewport 2 */}
+                    {isSplit && (
+                        <div style={{ flex: "1 1 50%", width: "50%", height: "100%", position: "relative", boxSizing: "border-box" }}>
+                            <Scene 
+                                onControllerReady={setSceneController2} 
+                                showTextBlock={showTextBlock}
+                                showAxes={showAxes}
+                                showRuler={showRuler}
+                                showGrid={showGrid}
+                            />
+                            <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', fontSize: 11, borderRadius: 3, pointerEvents: 'none', fontWeight: 600, zIndex: 100 }}>Viewport 2</div>
+                        </div>
+                    )}
                 </main>
                 
             </div>
 
-            {/* Bottom Status Information */}
-            <StatusBar sceneController={sceneController} />
-
+            <StatusBar sceneController={sceneController1} />
         </div>
     );
 }

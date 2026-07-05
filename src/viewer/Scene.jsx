@@ -7,25 +7,36 @@ import TextBlockController      from "../controllers/TextBlockController";
 import MeasurementController    from "../controllers/MeasurementController";
 import OrientationTriad         from "./OrientationTriad";
 
-export default function Scene({ onControllerReady }) {
+export default function Scene({ onControllerReady, showTextBlock = false, showAxes = true, showRuler = true, showGrid = false }) {
     const containerRef = useRef();
+    
+    // Lưu các phần tử DOM thông qua Refs để chỉnh style trực tiếp
+    const textBlockRef = useRef(null);
+    const rulerRef = useRef(null);
+
+    // Dùng Refs để tránh re-init Three.js canvas khi ấn nút trên Toolbar
+    const showAxesRef = useRef(showAxes);
+    const showGridRef = useRef(showGrid);
+
+    useEffect(() => { showAxesRef.current = showAxes; }, [showAxes]);
+    useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
+
+    // Lắng nghe thay đổi trực tiếp để ẩn hiện DOM
+    useEffect(() => {
+        if (textBlockRef.current) textBlockRef.current.style.display = showTextBlock ? "block" : "none";
+    }, [showTextBlock]);
+
+    useEffect(() => {
+        if (rulerRef.current) rulerRef.current.style.display = showRuler ? "block" : "none";
+    }, [showRuler]);
 
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
 
-        //------------------------------------------
-        // Cấu hình Triad ban đầu (Dùng làm biến để tính toán layout)
-        //------------------------------------------
-        const triadConfig = {
-            position: "bottom-left", // Vị trí của Triad: "bottom-left" hoặc "bottom-right"
-            size: 120                // Kích thước chiều rộng/cao của Triad (triad width)
-        };
-        const padding = 20;          // Khoảng cách padding theo yêu cầu
+        const triadConfig = { position: "bottom-left", size: 120 };
+        const padding = 20;          
 
-        //------------------------------------------
-        // Renderer & Camera
-        //------------------------------------------
         const rendererController = new RendererController(container);
         const renderer = rendererController.renderer;
 
@@ -42,60 +53,75 @@ export default function Scene({ onControllerReady }) {
         camera.position.set(10, 10, 10);
 
         const sceneController = new SceneController(camera);
+        sceneController.camera = camera;
 
-        //------------------------------------------
-        // 1. TẠO CONTAINER CHO TEXTBLOCK (Trải đều theo chiều rộng)
-        //------------------------------------------
+        // --- HỆ THỐNG LƯỚI ĐÔI ADAPTIVE CAD GRID (MẶT PHẲNG X-Z) ---
+        // 1. Lưới chính (Major Grid) - Phân chia khoảng lớn nét đậm
+        const majorGrid = new THREE.GridHelper(2000, 200, 0x444444, 0x888888); 
+        majorGrid.name = "system_grid";
+        majorGrid.frustumCulled = false;
+        majorGrid.material.transparent = true;
+        majorGrid.material.opacity = 0.5;
+        majorGrid.material.depthWrite = true;
+        majorGrid.material.polygonOffset = true;
+        majorGrid.material.polygonOffsetFactor = 1;
+        majorGrid.material.polygonOffsetUnits = 1;
+        sceneController.scene.add(majorGrid);
+
+        // 2. Lưới phụ (Minor Grid) - TĂNG PHÂN ĐOẠN LÊN 2000 ĐỂ Ô LƯỚI MỊN HƠN 2 LẦN
+        // (Nếu muốn mịn nữa, bạn có thể tăng hẳn lên 4000)
+        const minorGrid = new THREE.GridHelper(2000, 2000, 0x999999, 0xcccccc);
+        minorGrid.name = "system_grid";
+        minorGrid.frustumCulled = false;
+        minorGrid.material.transparent = true;
+        minorGrid.material.opacity = 0.25; // Tăng nhẹ opacity để nhìn rõ lưới mịn hơn
+        minorGrid.material.depthWrite = true;
+        minorGrid.material.polygonOffset = true;
+        minorGrid.material.polygonOffsetFactor = 1.1;
+        minorGrid.material.polygonOffsetUnits = 1.1;
+        sceneController.scene.add(minorGrid);
+
+        // Tạo phần tử chứa TextBlock DOM Panel
         const textBlockContainer = document.createElement("div");
-        
-        // Tính toán left và right động dựa theo cấu hình vị trí Triad
-        const leftPosition = triadConfig.position === "bottom-left" 
-            ? `${triadConfig.size + padding}px`  // triad width + 20px padding
-            : `${padding}px`;                   // 20px padding mặc định nếu không có triad bên trái
-
-        const rightPosition = triadConfig.position === "bottom-right"
-            ? `${triadConfig.size + padding}px` // scene width - triad width - 20px padding
-            : `${padding}px`;                   // 20px padding mặc định nếu không có triad bên phải
+        textBlockRef.current = textBlockContainer; 
+        const leftPosition = triadConfig.position === "bottom-left" ? `${triadConfig.size + padding}px` : `${padding}px`;                   
+        const rightPosition = triadConfig.position === "bottom-right" ? `${triadConfig.size + padding}px` : `${padding}px`;                   
 
         Object.assign(textBlockContainer.style, {
             position: "absolute",
-            bottom: "70px",       // Nằm trên Ruler (Ruler 20px + Chiều cao thước ~30px + 20px Padding = 70px)
-            left: leftPosition,   // Điểm bắt đầu
-            right: rightPosition, // Điểm kết thúc
+            bottom: "70px",       
+            left: leftPosition,   
+            right: rightPosition, 
             pointerEvents: "none",
             zIndex: 10,
-            display: "block"      // Đảm bảo khối trải rộng tối đa từ left sang right
+            display: showTextBlock ? "block" : "none"      
         });
         container.appendChild(textBlockContainer);
 
-        // Khởi tạo TextBlock bên trong container đã được tính toán vị trí chuẩn
         const textBlockController = new TextBlockController(textBlockContainer, {
-            position: "relative", // Chuyển sang relative để điền đầy textBlockContainer rộng lớn này
+            position: "relative", 
             triadPosition: triadConfig.position,  
             triadSize: triadConfig.size                 
         });
         sceneController.textBlock = textBlockController;
 
-        //------------------------------------------
-        // 2. TẠO CONTAINER CHO MEASUREMENT RULER (Chính giữa - Dưới cùng)
-        //------------------------------------------
+        // Tạo phần tử chứa Measurement Ruler Component
         const rulerContainer = document.createElement("div");
+        rulerRef.current = rulerContainer; 
         Object.assign(rulerContainer.style, {
             position: "absolute",
             bottom: "20px",
             left: "50%",
             transform: "translateX(-50%)",
             pointerEvents: "none",
-            zIndex: 10
+            zIndex: 10,
+            display: showRuler ? "block" : "none"
         });
         container.appendChild(rulerContainer);
 
-        // Khởi tạo thước đo nằm riêng ở rulerContainer
         const measurementController = new MeasurementController(rulerContainer, camera);
 
-        //------------------------------------------
-        // Orientation triad (View Cube) & Camera Controller
-        //------------------------------------------
+        // Tạo Khối định hướng Triad axes
         const triad = new OrientationTriad(renderer);
         const cameraController = new CameraController(camera, renderer.domElement, {
             autoResize: false,
@@ -105,26 +131,17 @@ export default function Scene({ onControllerReady }) {
             },
         });
         cameraController.setDamping(false);
-
-        const updateClipping = () => {
-            const box = new THREE.Box3().setFromObject(sceneController.scene);
-            if (!box.isEmpty()) {
-                cameraController.setBoundingSphere(box.getBoundingSphere(new THREE.Sphere()));
-            }
-        };
-        updateClipping();
-
         sceneController.cameraController = cameraController;
-        if (onControllerReady) onControllerReady(sceneController);
+        
+        sceneController.updateClipping();
 
-        //------------------------------------------
-        // Resize & Animation Loop
-        //------------------------------------------
         function resize() {
-            rendererController.resize();
+            if (!container) return;
             const w = container.clientWidth;
             const h = container.clientHeight;
             if (w === 0 || h === 0) return;
+
+            rendererController.resize ? rendererController.resize() : renderer.setSize(w, h, false);
 
             const a = w / h;
             const halfH = (camera.top - camera.bottom) / 2;
@@ -132,25 +149,54 @@ export default function Scene({ onControllerReady }) {
             camera.right = halfH * a;
             camera.updateProjectionMatrix();
             
-            measurementController.update(); 
+            if (measurementController?.update) measurementController.update(); 
         }
 
-        const resizeObserver = new ResizeObserver(resize);
-        resizeObserver.observe(container);
+        sceneController.onResize = resize;
+        if (onControllerReady) onControllerReady(sceneController);
 
+        const resizeObserver = new ResizeObserver(() => { resize(); });
+        resizeObserver.observe(container);
+        
         let rafId;
         function animate() {
             rafId = requestAnimationFrame(animate);
+
+            if (showGridRef.current) {
+                majorGrid.visible = true;
+                minorGrid.visible = true;
+
+                const zoom = camera.zoom || 1;
+                const exponent = Math.floor(Math.log10(1 / zoom));
+                const majorScale = Math.pow(10, exponent);
+                
+                // CẬP NHẬT: Vì mật độ phân đoạn khởi tạo của minorGrid (2000) 
+                // đang gấp 10 lần majorGrid (200), ta giữ nguyên tỷ lệ scale là 1
+                const minorScale = majorScale; 
+
+                majorGrid.scale.set(majorScale, 1, majorScale);
+                minorGrid.scale.set(minorScale, 1, minorScale);
+
+                const fractional = (1 / zoom) / majorScale;
+                minorGrid.material.opacity = Math.max(0, Math.min(0.3, (1 - fractional) * 1.5));
+                
+                sceneController.updateClipping(); 
+            } else {
+                majorGrid.visible = false;
+                minorGrid.visible = false;
+            }
+            
             rendererController.render(sceneController.scene, camera);
-            triad.update(camera);
-            triad.render();
-            measurementController.update(); 
+            if (showAxesRef.current) {
+                triad.update(camera);
+                triad.render();
+            } else {
+                renderer.clearDepth();
+            }
+            if (measurementController?.update) measurementController.update(); 
         }
         animate();
 
-        //------------------------------------------
-        // Clean up giải phóng bộ nhớ
-        //------------------------------------------
         return () => {
             cancelAnimationFrame(rafId);
             resizeObserver.disconnect();
@@ -158,11 +204,10 @@ export default function Scene({ onControllerReady }) {
             cameraController.dispose();
             textBlockController.dispose();
             measurementController.dispose();
-            
             if (container.contains(textBlockContainer)) container.removeChild(textBlockContainer);
             if (container.contains(rulerContainer)) container.removeChild(rulerContainer);
         };
-    }, [onControllerReady]);
+    }, [onControllerReady]); 
 
     return <div ref={containerRef} className="scene-container" style={{ width: "100%", height: "100%", position: "relative" }} />;
 }

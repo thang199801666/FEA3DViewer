@@ -1,10 +1,22 @@
 import { useState } from "react";
 
-export default function Toolbar({ sceneController }) {
-    // Đổi mặc định sang tab "view" hoặc giữ "home" tùy bạn, ở đây để mặc định là "view"
+export default function Toolbar({ 
+    sceneController, 
+    isSplit, 
+    onToggleSplit, 
+    isViewLinked, 
+    onToggleViewLink,
+    showTextBlock,
+    onToggleTextBlock,
+    showAxes,
+    onToggleAxes,
+    showRuler,
+    onToggleRuler,
+    showGrid,
+    onToggleGrid
+}) {
     const [activeTab, setActiveTab] = useState("view");
     
-    // --- Action Handlers ---
     const handleFitView = () => {
         const tryFitView = () => {
             if (!sceneController || typeof sceneController.fitView !== "function") {
@@ -56,7 +68,6 @@ export default function Toolbar({ sceneController }) {
         }
     };
 
-    // --- Định kiểu CSS inline ---
     const styles = {
         ribbonBar: {
             fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif',
@@ -94,7 +105,7 @@ export default function Toolbar({ sceneController }) {
             textAlign: 'center'
         },
         groupContent: {
-            whiteSpace: 'nowrap' // Giữ các button trên cùng một hàng ngang
+            whiteSpace: 'nowrap'
         },
         groupTitle: {
             fontSize: '11px',
@@ -114,7 +125,12 @@ export default function Toolbar({ sceneController }) {
             cursor: 'pointer',
             textAlign: 'center',
             borderRadius: '3px',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            transition: 'all 0.15s ease'
+        },
+        activeSquareBtn: {
+            backgroundColor: '#e0eef9',
+            border: '1px solid #70b5e8'
         },
         icon: {
             display: 'block',
@@ -134,7 +150,6 @@ export default function Toolbar({ sceneController }) {
 
     return (
         <div className="ribbon-bar" style={styles.ribbonBar}>
-            {/* 1. Tab Headers */}
             <div className="ribbon-tabs" style={styles.tabHeaders}>
                 <button 
                     style={{ ...styles.tabHeaderBtn, ...(activeTab === "home" ? styles.tabHeaderBtnActive : {}) }}
@@ -156,13 +171,9 @@ export default function Toolbar({ sceneController }) {
                 </button>
             </div>
 
-            {/* 2. Ribbon Content Panel */}
             <div className="ribbon-content-panel" style={styles.contentPanel}>
-                
-                {/* --- HOME TAB --- */}
                 {activeTab === "home" && (
                     <div className="ribbon-tab-pane">
-                        {/* Group: Edit Geometry */}
                         <div className="ribbon-group" style={styles.group}>
                             <div className="ribbon-group-content" style={styles.groupContent}>
                                 <button className="ribbon-btn ribbon-btn-danger" style={styles.squareBtn} onClick={handleClearScene} title="Clear Scene">
@@ -175,66 +186,73 @@ export default function Toolbar({ sceneController }) {
                     </div>
                 )}
 
-                {/* --- VIEW TAB (MỚI) --- */}
                 {activeTab === "view" && (
                     <div className="ribbon-tab-pane">
                         <div className="ribbon-group" style={styles.group}>
                             <div className="ribbon-group-content" style={styles.groupContent}>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("front")} title="Front View"><span style={styles.icon}>⏹️</span><span style={styles.label}>Front</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("back")} title="Back View"><span style={styles.icon}>⏹️</span><span style={styles.label}>Back</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("left")} title="Left View"><span style={styles.icon}>◀️</span><span style={styles.label}>Left</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("right")} title="Right View"><span style={styles.icon}>▶️</span><span style={styles.label}>Right</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("top")} title="Top View"><span style={styles.icon}>🔼</span><span style={styles.label}>Top</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("bottom")} title="Bottom View"><span style={styles.icon}>🔽</span><span style={styles.label}>Bottom</span></button>
+                                <button className="ribbon-btn" style={styles.squareBtn} onClick={handleResetView} title="Iso View"><span style={styles.icon}>🏠</span><span style={styles.label}>Iso</span></button>
                                 
-                                {/* 1. 6 góc chiếu kỹ thuật mặc định (Nằm trước) */}
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("front")} title="Front View">
-                                    <span style={styles.icon}>⏹️</span>
-                                    <span style={styles.label}>Front</span>
-                                </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("back")} title="Back View">
-                                    <span style={styles.icon}>⏹️</span>
-                                    <span style={styles.label}>Back</span>
-                                </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("left")} title="Left View">
-                                    <span style={styles.icon}>◀️</span>
-                                    <span style={styles.label}>Left</span>
-                                </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("right")} title="Right View">
-                                    <span style={styles.icon}>▶️</span>
-                                    <span style={styles.label}>Right</span>
-                                </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("top")} title="Top View">
-                                    <span style={styles.icon}>🔼</span>
-                                    <span style={styles.label}>Top</span>
-                                </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("bottom")} title="Bottom View">
-                                    <span style={styles.icon}>🔽</span>
-                                    <span style={styles.label}>Bottom</span>
-                                </button>
-
-                                {/* 2. Góc ISO View */}
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={handleResetView} title="Iso View">
-                                    <span style={styles.icon}>🏠</span>
-                                    <span style={styles.label}>Iso</span>
-                                </button>
-
-                                {/* Thanh chia nhỏ nội bộ (tùy chọn) */}
                                 <span style={{ display: 'inline-block', borderLeft: '1px dashed #ccc', height: '40px', margin: '0 6px', verticalAlign: 'middle' }} />
 
-                                {/* 3. Khung Fit View (Nằm cuối cùng) */}
                                 <button className="ribbon-btn" style={styles.squareBtn} onClick={handleFitView} title="Fit View">
                                     <span style={styles.icon}>🔍</span>
                                     <span style={styles.label}>Fit</span>
                                 </button>
-                                
                             </div>
                             <div className="ribbon-group-title" style={styles.groupTitle}>Camera Navigate</div>
                         </div>
                     </div>
                 )}
 
-                {/* --- DISPLAY TAB --- */}
                 {activeTab === "display" && (
                     <div className="ribbon-tab-pane">
-                        {/* Group: Visibility Controls */}
                         <div className="ribbon-group" style={styles.group}>
                             <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => console.log("Toggle Grid")}>
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ ...styles.squareBtn, ...(showTextBlock ? styles.activeSquareBtn : {}) }} 
+                                    onClick={onToggleTextBlock}
+                                    title="Toggle Text Block"
+                                >
+                                    <span style={styles.icon}>📝</span>
+                                    <span style={styles.label}>Text Block</span>
+                                </button>
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ ...styles.squareBtn, ...(showAxes ? styles.activeSquareBtn : {}) }} 
+                                    onClick={onToggleAxes}
+                                    title="Toggle Orientation Triad"
+                                >
+                                    <span style={styles.icon}>📐</span>
+                                    <span style={styles.label}>Axes Triad</span>
+                                </button>
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ ...styles.squareBtn, ...(showRuler ? styles.activeSquareBtn : {}) }} 
+                                    onClick={onToggleRuler}
+                                    title="Toggle Measurement Ruler"
+                                >
+                                    <span style={styles.icon}>📏</span>
+                                    <span style={styles.label}>Ruler</span>
+                                </button>
+                            </div>
+                            <div className="ribbon-group-title" style={styles.groupTitle}>Show/Hide</div>
+                        </div>
+
+                        <div className="ribbon-group" style={styles.group}>
+                            <div className="ribbon-group-content" style={styles.groupContent}>
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ ...styles.squareBtn, ...(showGrid ? styles.activeSquareBtn : {}) }} 
+                                    onClick={onToggleGrid}
+                                    title="Toggle Infinite Plane Grid"
+                                >
                                     <span style={styles.icon}>🌐</span>
                                     <span style={styles.label}>Grid</span>
                                 </button>
@@ -242,12 +260,37 @@ export default function Toolbar({ sceneController }) {
                                     <span style={styles.icon}>🕸️</span>
                                     <span style={styles.label}>Wire</span>
                                 </button>
+
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ ...styles.squareBtn, ...(isSplit ? styles.activeSquareBtn : {}) }} 
+                                    onClick={onToggleSplit}
+                                    title="Split Viewport Horizontally"
+                                >
+                                    <span style={styles.icon}>🥞</span>
+                                    <span style={styles.label}>Split View</span>
+                                </button>
+
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={{ 
+                                        ...styles.squareBtn, 
+                                        ...(isViewLinked && isSplit ? styles.activeSquareBtn : {}),
+                                        opacity: isSplit ? 1 : 0.4,
+                                        cursor: isSplit ? 'pointer' : 'not-allowed'
+                                    }} 
+                                    onClick={onToggleViewLink}
+                                    disabled={!isSplit}
+                                    title={isSplit ? "Link/Unlink Camera" : "Chỉ dùng khi Split View đang mở"}
+                                >
+                                    <span style={styles.icon}>🔗</span>
+                                    <span style={styles.label}>Link View</span>
+                                </button>
                             </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Visibility</div>
+                            <div className="ribbon-group-title" style={styles.groupTitle}>Visibility & Layout</div>
                         </div>
                     </div>
                 )}
-
             </div>
         </div>
     );

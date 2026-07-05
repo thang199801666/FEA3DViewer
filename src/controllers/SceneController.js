@@ -36,16 +36,42 @@ export default class SceneController {
     }
 
     /**
-     * Zoom Fit toàn bộ scene, giữ nguyên hướng nhìn hiện tại.
-     * padding: hệ số nới rộng (1.2 = chừa 20% biên), KHÔNG phải pixel như bản cũ —
-     * CameraMath.fitBox tính theo tỉ lệ camera-space, không phụ thuộc kích thước viewport.
+     * Hàm nội bộ tính toán Bounding Box tinh khiết của các Model hình học trong Scene,
+     * loại trừ hoàn toàn các thành phần bổ trợ như lưới tọa độ (system_grid).
+     */
+    _calculateModelBounds() {
+        const box = new THREE.Box3();
+        
+        if (!this.scene) return box;
+        this.scene.updateMatrixWorld(true);
+
+        this.scene.traverse((child) => {
+            // Loại trừ Grid hệ thống dựa vào tên định danh hoặc kiểu lớp đối tượng
+            if (child === this.scene || child.name === "system_grid" || child.isGridHelper) {
+                return;
+            }
+
+            // Chỉ tính toán giới hạn không gian dựa trên các đối tượng hình học thực tế (Mesh)
+            if (child.isMesh) {
+                if (!child.geometry.boundingBox) {
+                    child.geometry.computeBoundingBox();
+                }
+                const childBox = child.geometry.boundingBox.clone();
+                childBox.applyMatrix4(child.matrixWorld);
+                box.union(childBox);
+            }
+        });
+
+        return box;
+    }
+
+    /**
+     * Zoom Fit toàn bộ scene, giữ nguyên hướng nhìn hiện tại (Đã loại trừ Grid)
      */
     fitView(padding = 1.2) {
         if (!this.cameraController || !this.scene) return false;
 
-        this.scene.updateMatrixWorld(true);
-
-        const box = new THREE.Box3().setFromObject(this.scene);
+        const box = this._calculateModelBounds();
         if (box.isEmpty()) return false;
 
         this.cameraController.zoomFit(box, { padding, animate: true });
@@ -55,7 +81,6 @@ export default class SceneController {
 
     /**
      * Đặt camera về 1 trong các view chuẩn rồi tự động Fit View theo nội dung scene.
-     * viewName: 'front' | 'back' | 'left' | 'right' | 'top' | 'bottom' | 'iso'
      */
     setView(viewName) {
         if (!this.cameraController) return false;
@@ -68,8 +93,6 @@ export default class SceneController {
         }
 
         this.cameraController.setStandardView(name, true);
-        // Fit lại theo nội dung scene sau khi animation xoay kết thúc, để khung
-        // hình luôn vừa khít bất kể trước đó zoom ở mức nào.
         window.setTimeout(() => this.fitView(), 420);
         return true;
     }
@@ -80,16 +103,37 @@ export default class SceneController {
     }
 
     /**
-     * Cập nhật bounding sphere cho auto-clipping của CameraController.
-     * Gọi lại hàm này mỗi khi thêm/xoá mesh trong scene (ví dụ sau Clear Scene).
+     * Cập nhật bounding sphere cho bộ xử lý auto-clipping của CameraController (Đã loại trừ Grid)
      */
     updateClipping() {
         if (!this.cameraController || !this.scene) return;
 
-        const box = new THREE.Box3().setFromObject(this.scene);
+        // 1. Tính toán box tinh khiết của Model (đã loại trừ system_grid)
+        const box = this._calculateModelBounds();
         if (box.isEmpty()) return;
 
         const sphere = box.getBoundingSphere(new THREE.Sphere());
+        
+        // 2. GIẢI PHÁP ĐỘNG: Lấy giá trị zoom hiện tại của camera (mặc định là 1 nếu không có)
+        const currentZoom = (this.camera && this.camera.zoom) ? this.camera.zoom : 1;
+
+        // Định nghĩa kích thước cơ sở của Grid (ví dụ bạn đặt lưới kích thước 2000)
+        const baseGridSize = 2000; 
+
+        // Khi zoom out (currentZoom giảm dần về 0.1, 0.01...), ta lấy kích thước lưới 
+        // chia cho currentZoom để nới rộng bán kính khối cầu bao phủ một cách vô hạn.
+        const dynamicRadius = Math.max(sphere.radius * 3.0, baseGridSize / currentZoom);
+
+        sphere.radius = dynamicRadius;
+
+        // 3. Đẩy thông số khối cầu đã nới rộng sang cho bộ điều khiển camera tính near/far
         this.cameraController.setBoundingSphere(sphere);
+        
+        // 4. Ép ma trận trực giao của camera mở rộng khoảng cắt tuyệt đối ở tầng cấu hình
+        if (this.camera && typeof this.camera.updateProjectionMatrix === "function") {
+            this.camera.near = -dynamicRadius; // Cho phép hiển thị cả các vật thể phía sau camera khi trực giao
+            this.camera.far = dynamicRadius * 2;
+            this.camera.updateProjectionMatrix();
+        }
     }
 }

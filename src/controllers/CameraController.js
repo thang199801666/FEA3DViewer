@@ -62,6 +62,8 @@ export class CameraController {
 
     this._boundingSphere = null;
 
+    this._listeners = {};
+
     this._applyStateToCamera();
     this._updateClipping();
 
@@ -131,6 +133,22 @@ export class CameraController {
   }
 }
 
+addEventListener(type, fn) {
+  if (!this._listeners[type]) this._listeners[type] = new Set();
+  this._listeners[type].add(fn);
+}
+
+removeEventListener(type, fn) {
+  this._listeners[type]?.delete(fn);
+}
+
+dispatchEvent(type, payload) {
+  this._listeners[type]?.forEach((fn) => fn(payload));
+}
+refreshClipping() {
+  this._updateClipping();
+}
+
   dispose() {
     this.mouse.dispose();
     this.animation.stop();
@@ -164,7 +182,7 @@ export class CameraController {
     this.camera.quaternion.copy(s.quaternion);
   }
 
-  _afterStateChange() {
+_afterStateChange() {
     if (!this.state.isValid()) {
       console.warn('[CameraController] phát hiện state NaN, đã bỏ qua thao tác.');
       return;
@@ -173,8 +191,9 @@ export class CameraController {
     this._updateClipping();
     if (this.onChange) this.onChange(this.state);
     if (this.onOrientationChange) this.onOrientationChange(this.state.quaternion);
+    this.dispatchEvent('change', this.state);   // <-- thêm dòng này
     this._requestRender();
-  }
+}
 
   _updateClipping() {
     this.clipping.update(this._boundingSphere);
