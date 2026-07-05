@@ -50,17 +50,24 @@ export default function Toolbar({
         
         const toRemove = [];
         sceneController.scene.traverse((child) => {
-            if (child.isMesh) toRemove.push(child);
+            // Kiểm tra nếu là Actor hoặc Mesh đơn lẻ không thuộc Actor
+            if (child.isActor || (child.isMesh && !child.parent.isActor)) {
+                toRemove.push(child);
+            }
         });
         
-        toRemove.forEach((mesh) => {
-            mesh.geometry.dispose();
-            if (Array.isArray(mesh.material)) {
-                mesh.material.forEach((m) => m.dispose());
+        toRemove.forEach((obj) => {
+            if (typeof obj.dispose === "function") {
+                obj.dispose(); // Gọi hàm dispose của Actor xử lý sạch sẽ cả Edges và Mesh
             } else {
-                mesh.material.dispose();
+                obj.geometry?.dispose();
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach((m) => m.dispose());
+                } else {
+                    obj.material?.dispose();
+                }
             }
-            sceneController.scene.remove(mesh);
+            sceneController.scene.remove(obj);
         });
 
         if (typeof sceneController.updateClipping === "function") {
@@ -150,26 +157,33 @@ export default function Toolbar({
 
     return (
         <div className="ribbon-bar" style={styles.ribbonBar}>
-            <div className="ribbon-tabs" style={styles.tabHeaders}>
-                <button 
-                    style={{ ...styles.tabHeaderBtn, ...(activeTab === "home" ? styles.tabHeaderBtnActive : {}) }}
-                    onClick={() => setActiveTab("home")}
-                >
-                    Home
-                </button>
-                <button 
-                    style={{ ...styles.tabHeaderBtn, ...(activeTab === "view" ? styles.tabHeaderBtnActive : {}) }}
-                    onClick={() => setActiveTab("view")}
-                >
-                    View
-                </button>
-                <button 
-                    style={{ ...styles.tabHeaderBtn, ...(activeTab === "display" ? styles.tabHeaderBtnActive : {}) }}
-                    onClick={() => setActiveTab("display")}
-                >
-                    Display
-                </button>
-            </div>
+        <div className="ribbon-tabs" style={styles.tabHeaders}>
+            <button 
+                style={{ ...styles.tabHeaderBtn, ...(activeTab === "home" ? styles.tabHeaderBtnActive : {}) }}
+                onClick={() => setActiveTab("home")}
+            >
+                Home
+            </button>
+            {/* Thêm Tab Header mới */}
+            <button 
+                style={{ ...styles.tabHeaderBtn, ...(activeTab === "shape" ? styles.tabHeaderBtnActive : {}) }}
+                onClick={() => setActiveTab("shape")}
+            >
+                Shape
+            </button>
+            <button 
+                style={{ ...styles.tabHeaderBtn, ...(activeTab === "view" ? styles.tabHeaderBtnActive : {}) }}
+                onClick={() => setActiveTab("view")}
+            >
+                View
+            </button>
+            <button 
+                style={{ ...styles.tabHeaderBtn, ...(activeTab === "display" ? styles.tabHeaderBtnActive : {}) }}
+                onClick={() => setActiveTab("display")}
+            >
+                Display
+            </button>
+        </div>
 
             <div className="ribbon-content-panel" style={styles.contentPanel}>
                 {activeTab === "home" && (
@@ -182,6 +196,29 @@ export default function Toolbar({
                                 </button>
                             </div>
                             <div className="ribbon-group-title" style={styles.groupTitle}>Edit Geometry</div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === "shape" && (
+                    <div className="ribbon-tab-pane">
+                        <div className="ribbon-group" style={styles.group}>
+                            <div className="ribbon-group-content" style={styles.groupContent}>
+                                <button 
+                                    className="ribbon-btn" 
+                                    style={styles.squareBtn} 
+                                    onClick={() => {
+                                        if (sceneController && typeof sceneController.addBoxActor === "function") {
+                                            sceneController.addBoxActor();
+                                        }
+                                    }} 
+                                    title="Add Box Actor"
+                                >
+                                    <span style={styles.icon}>📦</span>
+                                    <span style={styles.label}>Add Box</span>
+                                </button>
+                            </div>
+                            <div className="ribbon-group-title" style={styles.groupTitle}>Create 3D</div>
                         </div>
                     </div>
                 )}

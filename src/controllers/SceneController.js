@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { Actor } from "../models/Actor";
 
 export default class SceneController {
     constructor(camera, cameraController = null) {
@@ -9,6 +10,7 @@ export default class SceneController {
         this.cameraController = cameraController;
 
         this.frustumSize = 10;
+        this._actorCounter = 0;
 
         this.initialize();
     }
@@ -23,16 +25,45 @@ export default class SceneController {
         const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
         light2.position.set(-10, -10, -10);
         this.scene.add(light2);
+    }
 
-        const cube = new THREE.Mesh(
-            new THREE.BoxGeometry(),
-            new THREE.MeshStandardMaterial({
-                color: 0xd9d9d9,
-                roughness: 0.7,
-                metalness: 0.1
-            })
-        );
-        this.scene.add(cube);
+    /**
+     * Tạo một Actor dạng khối hộp (Box) mặc định và thêm ngay vào Scene.
+     * @param {object} options Tùy chọn kích thước/màu/vị trí cho box mới.
+     */
+    addBoxActor(options = {}) {
+        if (!this.scene) return null;
+
+        const {
+            size = 1,
+            color = 0xd9d9d9,
+            position = null
+        } = options;
+
+        this._actorCounter += 1;
+        const name = `Box_${this._actorCounter}`;
+
+        const geometry = new THREE.BoxGeometry(size, size, size);
+        const material = new THREE.MeshStandardMaterial({
+            color,
+            roughness: 0.7,
+            metalness: 0.1
+        });
+
+        const actor = new Actor(geometry, material, name);
+
+        // Nếu không truyền vị trí cụ thể, xếp box mới cạnh các box đã có
+        // để tránh chồng lấn hoàn toàn lên nhau.
+        if (position) {
+            actor.position.set(position.x ?? 0, position.y ?? 0, position.z ?? 0);
+        } else {
+            actor.position.set((this._actorCounter - 1) * (size + 0.5), 0, 0);
+        }
+
+        this.scene.add(actor);
+        this.updateClipping();
+
+        return actor;
     }
 
     /**

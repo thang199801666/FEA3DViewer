@@ -3,6 +3,7 @@ import * as THREE from "three";
 import RendererController       from "../controllers/RendererController";
 import { CameraController }     from "../controllers/CameraController";
 import SceneController          from "../controllers/SceneController";
+import { PickingController }    from "../controllers/PickingController";
 import TextBlockController      from "../controllers/TextBlockController";
 import MeasurementController    from "../controllers/MeasurementController";
 import OrientationTriad         from "./OrientationTriad";
@@ -132,6 +133,9 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
         });
         cameraController.setDamping(false);
         sceneController.cameraController = cameraController;
+
+        const pickingController = new PickingController(sceneController);
+        sceneController.pickingController = pickingController;
         
         sceneController.updateClipping();
 
@@ -204,6 +208,7 @@ export default function Scene({ onControllerReady, showTextBlock = false, showAx
             cameraController.dispose();
             textBlockController.dispose();
             measurementController.dispose();
+            pickingController.dispose();
             if (container.contains(textBlockContainer)) container.removeChild(textBlockContainer);
             if (container.contains(rulerContainer)) container.removeChild(rulerContainer);
         };
