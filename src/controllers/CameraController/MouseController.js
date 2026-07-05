@@ -237,26 +237,23 @@ export class MouseController {
     const angleX = (dx / rect.width) * Math.PI * sensitivity * this.rotateSpeed;
     const angleY = (dy / rect.height) * Math.PI * sensitivity * this.rotateSpeed;
 
-    // 1. Lấy trạng thái quaternion hiện tại của camera
+    // 1. Lấy trạng thái quaternion hiện tại
     const currentQ = c.state.quaternion.clone();
 
-    // 2. Tính toán cấu thành Pitch (Xoay lên/xuống quanh trục X cục bộ của camera)
+    // 2. Định nghĩa các trục CỤC BỘ (Local) của chính camera hiện tại
+    // Thay vì dùng worldUp cố định, ta dùng chính trục Up cục bộ (0, 1, 0) và Right cục bộ (1, 0, 0)
     const localRight = new THREE.Vector3(1, 0, 0);
+    const localUp = new THREE.Vector3(0, 1, 0);
+
+    // 3. Tính toán các delta quaternion theo hệ trục nội tại
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(localUp, -angleX);
     const qPitch = new THREE.Quaternion().setFromAxisAngle(localRight, -angleY);
+    
+    // 4. Nhân tổ hợp hoàn toàn ở phía bên PHẢI (Local Transformation)
+    // Điều này có nghĩa là mọi thao tác xoay mới đều dựa trên góc nhìn hiện tại của camera
+    const targetQ = currentQ.multiply(qYaw).multiply(qPitch).normalize();
 
-    // 3. Tính toán cấu thành Yaw (Xoay trái/phải quanh trục Y của thế giới)
-    const worldUp = new THREE.Vector3(0, 1, 0);
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(worldUp, -angleX);
-
-    // 4. Tổ hợp chính xác theo thứ tự ma trận tích: 
-    // Áp dụng Pitch lên camera trước (currentQ * qPitch), sau đó áp dụng Yaw toàn cục lên kết quả (qYaw * ...)
-    const targetQ = new THREE.Quaternion()
-      .copy(qYaw)
-      .multiply(currentQ)
-      .multiply(qPitch)
-      .normalize();
-
-    // 5. Cập nhật trực tiếp vào state thay vì dùng `CameraMath.orbit(c.state, qDelta)` cũ
+    // 5. Cập nhật lại vào state
     c.state.quaternion.copy(targetQ);
     CameraMath.applyQuaternionToEye(c.state); 
     
