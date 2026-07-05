@@ -1,0 +1,344 @@
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    /* SpaceClaim uses standard Windows UI fonts */
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #fcfdfe;
+}
+
+/* ==========================================================================
+   1. TABBED RIBBON SYSTEM (SpaceClaim White & Light Blue Theme)
+   ========================================================================== */
+
+.ribbon-bar{
+    display:flex;
+    flex-direction:column;
+
+    background:#f7f7f7;
+
+    border-bottom:1px solid #c7c7c7;
+
+    user-select:none;
+
+    width:100%;
+
+    flex-shrink:0;
+}
+
+/* Tab Headers Bar Container */
+.ribbon-tabs{
+
+    display:flex;
+
+    align-items:flex-end;
+
+    background:#f2f2f2;
+
+    height:34px;
+
+    padding-left:8px;
+
+    border-bottom:1px solid #c7c7c7;
+
+}
+
+.ribbon-tab-header{
+
+    background:transparent;
+
+    border:none;
+
+    border-top:2px solid transparent;
+
+    padding:7px 16px;
+
+    font-size:12px;
+
+    color:#404040;
+
+    cursor:pointer;
+
+}
+
+.ribbon-tab-header:hover{
+
+    background:#ececec;
+
+}
+
+.ribbon-tab-header.active{
+
+    background:white;
+
+    border:1px solid #c7c7c7;
+
+    border-bottom:white;
+
+    border-top:2px solid #4a90d9;
+
+    font-weight:600;
+
+}
+
+/* Ribbon Tab Body Panel */
+.ribbon-content-panel{
+
+height:110px;
+
+background:white;
+
+display:flex;
+
+align-items:stretch;
+
+}
+
+.ribbon-tab-pane {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 2px 4px;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+/* Ribbon Functional Groups */
+.ribbon-group{
+
+display:flex;
+
+flex-direction:column;
+
+justify-content:space-between;
+
+padding:4px 8px;
+
+height:100%;
+
+}
+
+.ribbon-group-content {
+    display: flex;
+    flex-direction: row; /* Aligns all buttons strictly horizontal */
+    align-items: center;
+    gap: 2px;
+    flex-grow: 1;
+}
+
+/* Sub-title label under each CAD group */
+.ribbon-group-title{
+
+font-size:10px;
+
+text-align:center;
+
+border-top:1px solid #dcdcdc;
+
+padding-top:2px;
+
+color:#666;
+
+}
+
+/* Vertical separator line between ribbon groups */
+.ribbon-divider{
+
+width:1px;
+
+background:#d5d5d5;
+
+margin:6px 2px;
+
+}
+
+/* SpaceClaim Style Action Buttons: Text below Icon */
+.ribbon-btn{
+
+display:flex;
+
+flex-direction:column;
+
+justify-content:center;
+
+align-items:center;
+
+width:62px;
+
+height:72px;
+
+background:transparent;
+
+border:1px solid transparent;
+
+padding:2px;
+
+cursor:pointer;
+
+transition:.15s;
+
+}
+
+.ribbon-icon{
+
+font-size:24px;
+
+margin-bottom:6px;
+
+}
+
+.ribbon-label{
+
+font-size:11px;
+
+color:#303030;
+
+line-height:1.1;
+
+text-align:center;
+
+}
+
+/* Hover & Active States mapping to SpaceClaim UI palette */
+.ribbon-btn:hover{
+
+background:#e8f2fd;
+
+border:1px solid #8db7e7;
+
+}
+
+.ribbon-btn:active{
+
+background:#d2e7fb;
+
+}
+
+/* Danger variant for operations like deleting geometries */
+.ribbon-btn-danger:hover {
+    background-color: #ffecee;
+    border-color: #f7b1b1;
+}
+
+.ribbon-btn-danger:active {
+    background-color: #fbd5d5;
+    border-color: #f9a8d4;
+}
+
+/* ==========================================================================
+   2. MAIN WORKSPACE LAYOUT & CONTENT
+   ========================================================================== */
+
+.content {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* 3. SIDEBAR (Structure Tree & Properties Stack) */
+.sidebar {
+    width: 290px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fcfcfc;
+    border-right: 1px solid #d0d0d0;
+    color: #333;
+}
+
+.sidebar-top {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.sidebar-bottom {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border-top: 1px solid #d0d0d0;
+    background: #fafafa;
+}
+
+/* 4. PANEL HEADERS */
+.panel-title {
+    padding: 6px 12px;
+    background: #eaeaea;
+    color: #444;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #d0d0d0;
+    user-select: none;
+}
+
+/* 5. INTERACTIVE SPLITTERS */
+.sidebar-splitter {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 10;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+}
+
+.sidebar-splitter:hover {
+    background: #e0e0e0;
+}
+
+/* 6. VIEWPORT / 3D CANVAS CORNER */
+.viewport {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    /* Light engineering canvas background */
+    background: #eef2f7; 
+}
+
+.scene-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* 7. BOTTOM STATUS BAR */
+.status {
+    height: 26px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    color: #555;
+    background: #f3f3f3;
+    border-top: 1px solid #d0d0d0;
+    font-size: 11px;
+    user-select: none;
+}
+
+/* Utilities */
+.animate-fade-in {
+    animation: ribbonFade 0.1s ease-out;
+}
+
+@keyframes ribbonFade {
+    from { opacity: 0.8; }
+    to { opacity: 1; }
+}
