@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useState, useRef } from "react"; 
+import "./Toolbar.css"; 
+import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK";
 
 export default function Toolbar({ 
+    theme,
     sceneController, 
+    onSceneChanged, 
     isSplit, 
     onToggleSplit, 
     isViewLinked, 
@@ -13,25 +17,78 @@ export default function Toolbar({
     showRuler,
     onToggleRuler,
     showGrid,
-    onToggleGrid
+    onToggleGrid,
+    onOpenSettings  
 }) {
-    const [activeTab, setActiveTab] = useState("view");
+    const [activeTab, setActiveTab] = useState("home");
+    const [isOpenDialog, setIsOpenDialog] = useState(false);
+    const [boxDimensions, setBoxDimensions] = useState({ length: 1, width: 1, height: 1 });
+    // Trạng thái bật/tắt hiển thị scalar (contour). MẶC ĐỊNH: TẮT.
+    const [showContour, setShowContour] = useState(false);
     
+    const fileInputRef = useRef(null);
+
+    const handleOpenClick = () => {
+        if (fileInputRef.current) {
+            fileInputRef.current.click();
+        }
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const isVTK = file.name.endsWith(".vtk");
+        const isVTP = file.name.endsWith(".vtp");
+        if (!isVTK && !isVTP) { alert("Chỉ hỗ trợ .vtk hoặc .vtp"); return; }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const polyData = isVTK
+                    ? new VTKLegacyReader().parse(event.target.result)
+                    : new VTPReader().parse(event.target.result);
+
+                const mapper = new PolyDataMapper()
+                    .setInputData(polyData)
+                    .setLookupTable(new LookupTable());
+
+                mapper.setInterpolateScalarsBeforeMapping(true);
+                mapper.getLookupTable().setNumberOfColors(12);
+                
+                const actor = new Actor(mapper, file.name);
+                actor.showModelWithEdges();
+
+                if (sceneController && typeof sceneController.AddToRenderer === "function") {
+                    sceneController.AddToRenderer(actor, {
+                        showContour: showContour
+                    });
+                } else {
+                    sceneController.scene.add(actor);
+                    sceneController.updateClipping();
+                    sceneController.fitView();
+                }
+
+                onSceneChanged?.();
+            } catch (err) {
+                console.error(err);
+                alert(`Không đọc được file: ${err.message}`);
+            }
+        };
+
+        if (isVTK) reader.readAsText(file);
+        else reader.readAsArrayBuffer(file);
+        e.target.value = "";
+    };
+
     const handleFitView = () => {
         const tryFitView = () => {
-            if (!sceneController || typeof sceneController.fitView !== "function") {
-                return false;
-            }
+            if (!sceneController || typeof sceneController.fitView !== "function") return false;
             sceneController.fitView();
             return true;
         };
-
         if (tryFitView()) return;
-
         requestAnimationFrame(() => {
-            if (!tryFitView()) {
-                window.setTimeout(tryFitView, 50);
-            }
+            if (!tryFitView()) window.setTimeout(tryFitView, 50);
         });
     };
 
@@ -48,287 +105,251 @@ export default function Toolbar({
     const handleClearScene = () => {
         if (!sceneController || !sceneController.scene) return;
         
-        const toRemove = [];
-        sceneController.scene.traverse((child) => {
-            // Kiểm tra nếu là Actor hoặc Mesh đơn lẻ không thuộc Actor
-            if (child.isActor || (child.isMesh && !child.parent.isActor)) {
-                toRemove.push(child);
-            }
-        });
-        
-        toRemove.forEach((obj) => {
-            if (typeof obj.dispose === "function") {
-                obj.dispose(); // Gọi hàm dispose của Actor xử lý sạch sẽ cả Edges và Mesh
-            } else {
-                obj.geometry?.dispose();
-                if (Array.isArray(obj.material)) {
-                    obj.material.forEach((m) => m.dispose());
-                } else {
-                    obj.material?.dispose();
+        const scene = sceneController.scene;
+        for (let i = scene.children.length - 1; i >= 0; i--) {
+            const child = scene.children[i];
+            if (child.isActor) {
+                scene.remove(child);
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
                 }
             }
-            sceneController.scene.remove(obj);
-        });
+        }
+
+        if (sceneController._actorCounter !== undefined) {
+            sceneController._actorCounter = 0;
+        }
 
         if (typeof sceneController.updateClipping === "function") {
             sceneController.updateClipping();
         }
-    };
 
-    const styles = {
-        ribbonBar: {
-            fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif',
-            border: '1px solid #ccc',
-            backgroundColor: '#f5f5f5',
-            padding: '5px'
-        },
-        tabHeaders: {
-            borderBottom: '1px solid #ccc',
-            paddingBottom: '2px'
-        },
-        tabHeaderBtn: {
-            padding: '6px 15px',
-            cursor: 'pointer',
-            background: 'none',
-            border: 'none',
-            borderBottom: '2px solid transparent',
-            fontWeight: '600'
-        },
-        tabHeaderBtnActive: {
-            borderBottom: '2px solid #0078d4',
-            color: '#0078d4'
-        },
-        contentPanel: {
-            backgroundColor: '#fff',
-            padding: '8px',
-            minHeight: '95px'
-        },
-        group: {
-            display: 'inline-block',
-            verticalAlign: 'top',
-            borderRight: '1px solid #ddd',
-            paddingRight: '8px',
-            marginRight: '8px',
-            textAlign: 'center'
-        },
-        groupContent: {
-            whiteSpace: 'nowrap'
-        },
-        groupTitle: {
-            fontSize: '11px',
-            color: '#666',
-            marginTop: '5px',
-            textAlign: 'center'
-        },
-        squareBtn: {
-            display: 'inline-block',
-            verticalAlign: 'top',
-            width: '65px',
-            height: '65px',
-            padding: '5px',
-            margin: '0 2px',
-            border: '1px solid transparent',
-            backgroundColor: 'transparent',
-            cursor: 'pointer',
-            textAlign: 'center',
-            borderRadius: '3px',
-            boxSizing: 'border-box',
-            transition: 'all 0.15s ease'
-        },
-        activeSquareBtn: {
-            backgroundColor: '#e0eef9',
-            border: '1px solid #70b5e8'
-        },
-        icon: {
-            display: 'block',
-            fontSize: '20px',
-            marginBottom: '4px',
-            lineHeight: '1'
-        },
-        label: {
-            display: 'block',
-            fontSize: '11px',
-            color: '#333',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis'
+        if (sceneController.scalarBar) {
+            sceneController.scalarBar.setVisible(false);
+        }
+
+        if (typeof onSceneChanged === "function") {
+            onSceneChanged();
         }
     };
 
-    return (
-        <div className="ribbon-bar" style={styles.ribbonBar}>
-        <div className="ribbon-tabs" style={styles.tabHeaders}>
-            <button 
-                style={{ ...styles.tabHeaderBtn, ...(activeTab === "home" ? styles.tabHeaderBtnActive : {}) }}
-                onClick={() => setActiveTab("home")}
-            >
-                Home
-            </button>
-            {/* Thêm Tab Header mới */}
-            <button 
-                style={{ ...styles.tabHeaderBtn, ...(activeTab === "shape" ? styles.tabHeaderBtnActive : {}) }}
-                onClick={() => setActiveTab("shape")}
-            >
-                Shape
-            </button>
-            <button 
-                style={{ ...styles.tabHeaderBtn, ...(activeTab === "view" ? styles.tabHeaderBtnActive : {}) }}
-                onClick={() => setActiveTab("view")}
-            >
-                View
-            </button>
-            <button 
-                style={{ ...styles.tabHeaderBtn, ...(activeTab === "display" ? styles.tabHeaderBtnActive : {}) }}
-                onClick={() => setActiveTab("display")}
-            >
-                Display
-            </button>
-        </div>
+    const handleOpenBoxDialog = () => {
+        setIsOpenDialog(true);
+    };
 
-            <div className="ribbon-content-panel" style={styles.contentPanel}>
+    const handleConfirmAddBox = () => {
+        if (sceneController && typeof sceneController.addBoxActor === "function") {
+            const { length, width, height } = boxDimensions;
+            const boxActor = sceneController.addBoxActor(Number(length), Number(width), Number(height));
+
+            if (boxActor) {
+                if (typeof sceneController.AddToRenderer === "function") {
+                    sceneController.AddToRenderer(boxActor, {
+                        showContour: showContour
+                    });
+                }
+            }
+
+            if (typeof onSceneChanged === "function") {
+                onSceneChanged();
+            }
+        }
+        setIsOpenDialog(false);
+    };
+
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setBoxDimensions(prev => ({ ...prev, [name]: value }));
+    };
+
+    // CHUYỂN SANG GỌI PHƯƠNG THỨC TRUNG TÂM PlotContour TRONG SCENE
+    const handleToggleContour = () => {
+        if (!sceneController) return;
+        const nextState = !showContour;
+        setShowContour(nextState);
+
+        if (typeof sceneController.PlotContour === "function") {
+            sceneController.PlotContour(nextState);
+        }
+        onSceneChanged?.();
+    };
+
+    return (
+        <div className={`ribbon-toolbar ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                style={{ display: "none" }} 
+                accept=".vtk" 
+                onChange={handleFileChange} 
+            />
+
+            <div className="ribbon-tabs">
+                <button className={`ribbon-tab-btn ${activeTab === "home" ? "active" : ""}`} onClick={() => setActiveTab("home")}>Home</button>
+                <button className={`ribbon-tab-btn ${activeTab === "modify" ? "active" : ""}`} onClick={() => setActiveTab("modify")}>Modify</button>
+                <button className={`ribbon-tab-btn ${activeTab === "shape" ? "active" : ""}`} onClick={() => setActiveTab("shape")}>Shape</button>
+                <button className={`ribbon-tab-btn ${activeTab === "view" ? "active" : ""}`} onClick={() => setActiveTab("view")}>View</button>
+                <button className={`ribbon-tab-btn ${activeTab === "help" ? "active" : ""}`} onClick={() => setActiveTab("help")}>Help</button>
+            </div>
+
+            <div className="ribbon-body">
                 {activeTab === "home" && (
-                    <div className="ribbon-tab-pane">
-                        <div className="ribbon-group" style={styles.group}>
-                            <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button className="ribbon-btn ribbon-btn-danger" style={styles.squareBtn} onClick={handleClearScene} title="Clear Scene">
-                                    <span style={styles.icon}>🗑️</span>
-                                    <span style={styles.label}>Clear</span>
+                    <>
+                        <div className="ribbon-group">
+                            <div className="ribbon-group-content">
+                                <button className="ribbon-btn" onClick={handleOpenClick} title="Mở file VTK từ máy tính">
+                                    <span className="ribbon-icon">📂</span>
+                                    <span className="ribbon-label">Open</span>
+                                </button>
+                                <button className="ribbon-btn" onClick={handleResetView} title="Đặt lại hướng nhìn mặc định">
+                                    <span className="ribbon-icon">🏠</span>
+                                    <span className="ribbon-label">Reset</span>
                                 </button>
                             </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Edit Geometry</div>
+                            <div className="ribbon-group-title">File & Reset</div>
                         </div>
+
+                        <div className="ribbon-group">
+                            <div className="ribbon-group-content">
+                                <button className="ribbon-btn" onClick={onOpenSettings} title="Cấu hình hệ thống">
+                                    <span className="ribbon-icon">⚙️</span>
+                                    <span className="ribbon-label">Settings</span>
+                                </button>
+                            </div>
+                            <div className="ribbon-group-title">Configuration</div>
+                        </div>
+                    </>
+                )}
+
+                {activeTab === "modify" && (
+                    <div className="ribbon-group">
+                        <div className="ribbon-group-content">
+                            <button className="ribbon-btn" onClick={handleClearScene} title="Xóa toàn bộ đối tượng trong Scene">
+                                <span className="ribbon-icon">🗑️</span>
+                                <span className="ribbon-label">Clear All</span>
+                            </button>
+                        </div>
+                        <div className="ribbon-group-title">Scene Actions</div>
                     </div>
                 )}
 
                 {activeTab === "shape" && (
-                    <div className="ribbon-tab-pane">
-                        <div className="ribbon-group" style={styles.group}>
-                            <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={styles.squareBtn} 
-                                    onClick={() => {
-                                        if (sceneController && typeof sceneController.addBoxActor === "function") {
-                                            sceneController.addBoxActor();
-                                        }
-                                    }} 
-                                    title="Add Box Actor"
-                                >
-                                    <span style={styles.icon}>📦</span>
-                                    <span style={styles.label}>Add Box</span>
-                                </button>
-                            </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Create 3D</div>
+                    <div className="ribbon-group">
+                        <div className="ribbon-group-content">
+                            <button className="ribbon-btn" onClick={handleOpenBoxDialog} title="Thêm một hình khối Box">
+                                <span className="ribbon-icon">📦</span>
+                                <span className="ribbon-label">Box</span>
+                            </button>
                         </div>
+                        <div className="ribbon-group-title">Primitives</div>
                     </div>
                 )}
 
                 {activeTab === "view" && (
-                    <div className="ribbon-tab-pane">
-                        <div className="ribbon-group" style={styles.group}>
-                            <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("front")} title="Front View"><span style={styles.icon}>⏹️</span><span style={styles.label}>Front</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("back")} title="Back View"><span style={styles.icon}>⏹️</span><span style={styles.label}>Back</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("left")} title="Left View"><span style={styles.icon}>◀️</span><span style={styles.label}>Left</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("right")} title="Right View"><span style={styles.icon}>▶️</span><span style={styles.label}>Right</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("top")} title="Top View"><span style={styles.icon}>🔼</span><span style={styles.label}>Top</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => handleSetView("bottom")} title="Bottom View"><span style={styles.icon}>🔽</span><span style={styles.label}>Bottom</span></button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={handleResetView} title="Iso View"><span style={styles.icon}>🏠</span><span style={styles.label}>Iso</span></button>
-                                
-                                <span style={{ display: 'inline-block', borderLeft: '1px dashed #ccc', height: '40px', margin: '0 6px', verticalAlign: 'middle' }} />
-
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={handleFitView} title="Fit View">
-                                    <span style={styles.icon}>🔍</span>
-                                    <span style={styles.label}>Fit</span>
+                    <>
+                        <div className="ribbon-group">
+                            <div className="ribbon-group-content grid-views-layout">
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("front")}>FRONT</button>
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("back")}>BACK</button>
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("top")}>TOP</button>
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("bottom")}>BOTTOM</button>
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("left")}>LEFT</button>
+                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("right")}>RIGHT</button>
+                                <button className="ribbon-btn ribbon-btn-geo ISO" onClick={() => handleSetView("iso")}>ISO</button>
+                                <button className="ribbon-btn" onClick={handleFitView} title="Zoom vừa khít màn hình">
+                                    <span className="ribbon-icon">🔍</span>
+                                    <span className="ribbon-label">Fit</span>
                                 </button>
                             </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Camera Navigate</div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === "display" && (
-                    <div className="ribbon-tab-pane">
-                        <div className="ribbon-group" style={styles.group}>
-                            <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={{ ...styles.squareBtn, ...(showTextBlock ? styles.activeSquareBtn : {}) }} 
-                                    onClick={onToggleTextBlock}
-                                    title="Toggle Text Block"
-                                >
-                                    <span style={styles.icon}>📝</span>
-                                    <span style={styles.label}>Text Block</span>
-                                </button>
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={{ ...styles.squareBtn, ...(showAxes ? styles.activeSquareBtn : {}) }} 
-                                    onClick={onToggleAxes}
-                                    title="Toggle Orientation Triad"
-                                >
-                                    <span style={styles.icon}>📐</span>
-                                    <span style={styles.label}>Axes Triad</span>
-                                </button>
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={{ ...styles.squareBtn, ...(showRuler ? styles.activeSquareBtn : {}) }} 
-                                    onClick={onToggleRuler}
-                                    title="Toggle Measurement Ruler"
-                                >
-                                    <span style={styles.icon}>📏</span>
-                                    <span style={styles.label}>Ruler</span>
-                                </button>
-                            </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Show/Hide</div>
+                            <div className="ribbon-group-title">Orientations & Camera</div>
                         </div>
 
-                        <div className="ribbon-group" style={styles.group}>
-                            <div className="ribbon-group-content" style={styles.groupContent}>
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={{ ...styles.squareBtn, ...(showGrid ? styles.activeSquareBtn : {}) }} 
-                                    onClick={onToggleGrid}
-                                    title="Toggle Infinite Plane Grid"
-                                >
-                                    <span style={styles.icon}>🌐</span>
-                                    <span style={styles.label}>Grid</span>
+                        <div className="ribbon-group">
+                            <div className="ribbon-group-content">
+                                <button className={`ribbon-btn ${isSplit ? "active" : ""}`} onClick={onToggleSplit}>
+                                    <span className="ribbon-icon">🥞</span>
+                                    <span className="ribbon-label">Split View</span>
                                 </button>
-                                <button className="ribbon-btn" style={styles.squareBtn} onClick={() => console.log("Wireframe")}>
-                                    <span style={styles.icon}>🕸️</span>
-                                    <span style={styles.label}>Wire</span>
-                                </button>
-
                                 <button 
-                                    className="ribbon-btn" 
-                                    style={{ ...styles.squareBtn, ...(isSplit ? styles.activeSquareBtn : {}) }} 
-                                    onClick={onToggleSplit}
-                                    title="Split Viewport Horizontally"
-                                >
-                                    <span style={styles.icon}>🥞</span>
-                                    <span style={styles.label}>Split View</span>
-                                </button>
-
-                                <button 
-                                    className="ribbon-btn" 
-                                    style={{ 
-                                        ...styles.squareBtn, 
-                                        ...(isViewLinked && isSplit ? styles.activeSquareBtn : {}),
-                                        opacity: isSplit ? 1 : 0.4,
-                                        cursor: isSplit ? 'pointer' : 'not-allowed'
-                                    }} 
+                                    className={`ribbon-btn ${isViewLinked && isSplit ? "active" : ""}`} 
                                     onClick={onToggleViewLink}
                                     disabled={!isSplit}
-                                    title={isSplit ? "Link/Unlink Camera" : "Chỉ dùng khi Split View đang mở"}
+                                    title={isSplit ? "Liên kết Camera giữa các View" : "Chỉ dùng khi Split View đang mở"}
                                 >
-                                    <span style={styles.icon}>🔗</span>
-                                    <span style={styles.label}>Link View</span>
+                                    <span className="ribbon-icon">🔗</span>
+                                    <span className="ribbon-label">Link View</span>
                                 </button>
                             </div>
-                            <div className="ribbon-group-title" style={styles.groupTitle}>Visibility & Layout</div>
+                            <div className="ribbon-group-title">Layouts</div>
                         </div>
+
+                        <div className="ribbon-group">
+                            <div className="ribbon-group-content">
+                                <button className={`ribbon-btn ${showGrid ? "active" : ""}`} onClick={onToggleGrid}>
+                                    <span className="ribbon-icon">🌐</span>
+                                    <span className="ribbon-label">Grid</span>
+                                </button>
+                                <button className={`ribbon-btn ${showAxes ? "active" : ""}`} onClick={onToggleAxes}>
+                                    <span className="ribbon-icon">📐</span>
+                                    <span className="ribbon-label">Axes</span>
+                                </button>
+                                <button className={`ribbon-btn ${showRuler ? "active" : ""}`} onClick={onToggleRuler}>
+                                    <span className="ribbon-icon">📏</span>
+                                    <span className="ribbon-label">Ruler</span>
+                                </button>
+                                <button className={`ribbon-btn ${showTextBlock ? "active" : ""}`} onClick={onToggleTextBlock}>
+                                    <span className="ribbon-icon">📝</span>
+                                    <span className="ribbon-label">Notes</span>
+                                </button>
+                                {/* THAY ĐỔI LABEL VÀ TITLE THEO YÊU CẦU */}
+                                <button className={`ribbon-btn ${showContour ? "active" : ""}`} onClick={handleToggleContour} title="Kích hoạt Plot Contour ẩn/hiện trường dữ liệu màu sắc">
+                                    <span className="ribbon-icon">🌈</span>
+                                    <span className="ribbon-label">Contour</span>
+                                </button>
+                            </div>
+                            <div className="ribbon-group-title">Display Toggles</div>
+                        </div>
+                    </>
+                )}
+
+                {activeTab === "help" && (
+                    <div className="ribbon-group">
+                        <div className="ribbon-group-content">
+                            <a className="ribbon-btn" href="#documentation" target="_blank" rel="noreferrer">
+                                <span className="ribbon-icon">📖</span>
+                                <span className="ribbon-label">Docs</span>
+                            </a>
+                            <button className="ribbon-btn" onClick={() => alert("FEA Viewer Version 1.0.0")}>
+                                <span className="ribbon-icon">ℹ️</span>
+                                <span className="ribbon-label">About</span>
+                            </button>
+                        </div>
+                        <div className="ribbon-group-title">Support</div>
                     </div>
                 )}
             </div>
+
+            {isOpenDialog && (
+                <div className="modal-overlay">
+                    <div className="modal-container">
+                        <h3>Box Dimensions</h3>
+                        <div className="modal-body-inputs">
+                            <div className="input-group"><label>Length (X):</label><input type="number" name="length" value={boxDimensions.length} onChange={handleInputChange} min="0.1" step="0.1"/></div>
+                            <div className="input-group"><label>Width (Y):</label><input type="number" name="width" value={boxDimensions.width} onChange={handleInputChange} min="0.1" step="0.1"/></div>
+                            <div className="input-group"><label>Height (Z):</label><input type="number" name="height" value={boxDimensions.height} onChange={handleInputChange} min="0.1" step="0.1"/></div>
+                        </div>
+                        <div className="modal-actions">
+                            <button className="modal-btn cancel-btn" onClick={() => setIsOpenDialog(false)}>Cancel</button>
+                            <button className="modal-btn confirm-btn" onClick={handleConfirmAddBox}>Add Box</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

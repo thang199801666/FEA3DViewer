@@ -1,18 +1,31 @@
+// Camera/CameraMath.js
+// Toàn bộ hàm ở đây là PURE (không side-effect ra camera thật, trừ dolly có
+// ghi camera.zoom vì zoom là thuộc tính projection của THREE ortho camera).
+// Chỉ thao tác trên CameraState để Camera.js quyết định apply ngay hay animate.
 import * as THREE from 'three';
 
-/**
- * CameraMath
- * Toàn bộ hàm ở đây là PURE (không side-effect ra camera thật, trừ khi ghi rõ),
- * chỉ thao tác trên CameraState / camera tạm để controller quyết định apply
- * ngay lập tức hay animate.
- */
 export const CameraMath = {
   /**
-   * Xoay quanh target bằng quaternion (không dùng Euler -> không gimbal lock).
-   * deltaQuat: quaternion "delta" biểu diễn trong world-space.
+   * Xoay quanh target bằng quaternion delta biểu diễn trong WORLD-space.
    */
   orbit(state, deltaQuat) {
     state.quaternion.premultiply(deltaQuat).normalize();
+    this.applyQuaternionToEye(state);
+  },
+
+  /**
+   * Xoay theo hệ trục CỤC BỘ của camera (trackball-feel nhưng tự viết,
+   * không phụ thuộc TrackballControls/ArcballControls):
+   *   - yaw  : quay quanh trục Up cục bộ (0,1,0)
+   *   - pitch: quay quanh trục Right cục bộ (1,0,0)
+   * Nhân bên PHẢI => mọi thao tác xoay mới đều dựa trên góc nhìn hiện tại.
+   */
+  orbitLocal(state, angleYaw, anglePitch) {
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0), -angleYaw);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0), -anglePitch);
+    state.quaternion.multiply(qYaw).multiply(qPitch).normalize();
     this.applyQuaternionToEye(state);
   },
 
@@ -26,13 +39,14 @@ export const CameraMath = {
   },
 
   /**
-   * Pan theo screen-space: dịch chuyển target + eye theo trục right/up
-   * của camera hiện tại, độ lớn tính theo world-unit/pixel dựa trên
-   * kích thước frustum ortho hiện tại (không phụ thuộc distance).
+   * Pan theo screen-space: dịch target + eye theo trục right/up của camera,
+   * độ lớn = world-unit/pixel dựa trên frustum ortho hiện tại
+   * (không phụ thuộc distance).
    */
   pan(state, deltaScreenPx, viewportHeightPx, camera) {
     if (viewportHeightPx <= 0) return;
-    const worldPerPixel = (camera.top - camera.bottom) / camera.zoom / viewportHeightPx;
+    const worldPerPixel =
+      (camera.top - camera.bottom) / camera.zoom / viewportHeightPx;
     if (!Number.isFinite(worldPerPixel)) return;
 
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.quaternion);
@@ -47,8 +61,8 @@ export const CameraMath = {
   },
 
   /**
-   * Chuyển 1 điểm NDC (-1..1) thành điểm world nằm trên mặt phẳng
-   * đi qua target, vuông góc với hướng nhìn (đúng cho ortho).
+   * Chuyển 1 điểm NDC (-1..1) thành điểm world trên mặt phẳng đi qua target,
+   * vuông góc hướng nhìn (đúng cho ortho).
    */
   ndcToWorld(ndc, camera, state) {
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.quaternion);
@@ -63,9 +77,8 @@ export const CameraMath = {
   },
 
   /**
-   * Dolly (zoom) tương tác thời gian thực: mutate camera.zoom trực tiếp,
-   * neo theo con trỏ chuột nếu có cursorNDC (zoom to cursor).
-   * factor > 1: zoom in. Luôn clamp để không bao giờ NaN / <= 0.
+   * Dolly (zoom): mutate camera.zoom, neo theo con trỏ nếu có cursorNDC
+   * (zoom-to-cursor). factor > 1 = zoom in. Clamp để không bao giờ NaN / <= 0.
    */
   dolly(state, factor, camera, cursorNDC) {
     if (!Number.isFinite(factor) || factor <= 0) return;
@@ -88,9 +101,8 @@ export const CameraMath = {
   },
 
   /**
-   * Tính state + zoom cần thiết để "Zoom Fit" 1 Box3 trong camera-space
-   * (theo hướng nhìn hiện tại), có padding. KHÔNG mutate camera —
-   * trả về kết quả để controller tự apply (instant hoặc animate).
+   * Zoom Fit 1 Box3 theo hướng nhìn hiện tại (camera-space AABB), có padding.
+   * KHÔNG mutate camera — trả kết quả để Camera tự apply (instant / animate).
    */
   fitBox(state, camera, box, padding = 1.2) {
     if (!box || box.isEmpty()) return null;
@@ -136,8 +148,7 @@ export const CameraMath = {
   },
 
   /**
-   * Tính state + zoom cho "Zoom Window": người dùng kéo 1 khung chữ nhật
-   * trên màn hình (NDC min/max), khung đó sẽ lấp đầy viewport sau khi zoom.
+   * Zoom Window: khung chữ nhật (NDC min/max) sẽ lấp đầy viewport sau khi zoom.
    */
   fitWindow(state, camera, ndcMin, ndcMax) {
     const sizeNDC = new THREE.Vector2(
@@ -188,3 +199,5 @@ export const CameraMath = {
     return new THREE.Quaternion().setFromRotationMatrix(m);
   },
 };
+
+export default CameraMath;

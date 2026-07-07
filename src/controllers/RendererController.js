@@ -10,7 +10,6 @@ export default class RendererController {
 
             antialias: true,
             alpha: true
-
         });
 
         this.renderer.setPixelRatio(window.devicePixelRatio);

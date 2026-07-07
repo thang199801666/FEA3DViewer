@@ -10,9 +10,23 @@ export default function MainLayout() {
     const [sceneController2, setSceneController2] = useState(null);
     const [isSplit, setIsSplit] = useState(false);
     const [isViewLinked, setIsViewLinked] = useState(true);
-    const [isDragging, setIsDragging] = useState(false);
     
-    // --- Các trạng thái hiển thị thanh công cụ ---
+    // Quản lý kéo ngang (Sidebar & Scene)
+    const [isDragging, setIsDragging] = useState(false);
+    const [isHoveredSplitter, setIsHoveredSplitter] = useState(false);
+    
+    // --- State quản lý Theme ---
+    const [theme, setTheme] = useState("dark");
+    const isDark = theme === "dark";
+
+    // --- State quản lý Mouse Navigation Style ---
+    const [mouseStyle, setMouseStyle] = useState("Blender"); // Mặc định là Blender theo yêu cầu
+
+    // --- State quản lý Display Mode của Actor ---
+    const [displayMode, setDisplayMode] = useState("modelWithEdges"); // Mặc định khớp với Actor
+
+    const [sceneVersion, setSceneVersion] = useState(0);
+
     const [showTextBlock, setShowTextBlock] = useState(false); 
     const [showAxes, setShowAxes] = useState(true);
     const [showRuler, setShowRuler] = useState(true);
@@ -23,237 +37,290 @@ export default function MainLayout() {
     const sceneContainerRef = useRef(null); 
     const currentWidthRef = useRef(290); 
 
-    // TẠO SCENE DÙNG CHUNG CHO CẢ 2 VIEWPORTS
     const sharedSceneRef = useRef(new THREE.Scene());
-    useEffect(() => {
-        sharedSceneRef.current.background = new THREE.Color(0xffffff);
+
+    const triggerSceneUpdate = useCallback(() => {
+        setSceneVersion(v => v + 1);
     }, []);
+
+    // --- Hàm xử lý khi thay đổi Mouse Style từ StatusBar ---
+    const handleMouseStyleChange = useCallback((style) => {
+        setMouseStyle(style);
+        
+        // Cập nhật cấu hình xuống Core Engine tương tác của Viewport 1
+        if (sceneController1?.interactionController) {
+            sceneController1.interactionController.setNavigationStyle(style);
+        }
+        // Cập nhật cấu hình xuống Core Engine tương tác của Viewport 2 (nếu đang bật Split)
+        if (sceneController2?.interactionController) {
+            sceneController2.interactionController.setNavigationStyle(style);
+        }
+    }, [sceneController1, sceneController2]);
+
+    // --- Hàm xử lý khi thay đổi Display Mode từ StatusBar ---
+    const handleDisplayModeChange = useCallback((mode) => {
+        setDisplayMode(mode);
+
+        // Actors nằm trong shared scene, duyệt 1 lần là đủ.
+        // Ưu tiên scene của controller (đảm bảo đúng scene đang render), fallback về sharedScene.
+        const scene = sceneController1?.scene || sceneController2?.scene || sharedSceneRef.current;
+        if (scene) {
+            scene.traverse((obj) => {
+                if (obj.isActor && typeof obj.setDisplayMode === "function") {
+                    obj.setDisplayMode(mode);
+                }
+            });
+        }
+
+        // Refresh cả hai viewport
+        sceneController1?.requestRender?.();
+        sceneController2?.requestRender?.();
+    }, [sceneController1, sceneController2]);
+
+    // Lắng nghe khi các controller vừa khởi tạo xong để map đúng style mặc định ban đầu
+    useEffect(() => {
+        if (sceneController1?.interactionController) {
+            sceneController1.interactionController.setNavigationStyle(mouseStyle);
+        }
+    }, [sceneController1, mouseStyle]);
+
+    useEffect(() => {
+        if (sceneController2?.interactionController) {
+            sceneController2.interactionController.setNavigationStyle(mouseStyle);
+        }
+    }, [sceneController2, mouseStyle]);
+
 
     const startResizing = useCallback((e) => {
         e.preventDefault();
         setIsDragging(true);
+    }, []);
 
-        if (sceneContainerRef.current) {
-            const currentRect = sceneContainerRef.current.getBoundingClientRect();
-            sceneContainerRef.current.style.width = `${currentRect.width}px`;
-            sceneContainerRef.current.style.flexGrow = "0";
-            sceneContainerRef.current.style.flexShrink = "0";
+    const stopResizing = useCallback(() => {
+        setIsDragging(false);
+    }, []);
+
+    const resize = useCallback((e) => {
+        if (!isDragging || !workspaceRef.current || !sidebarRef.current || !sceneContainerRef.current) return;
+        
+        const containerRect = workspaceRef.current.getBoundingClientRect();
+        let newWidth = e.clientX - containerRect.left;
+        
+        if (newWidth < 240) newWidth = 240;
+        if (newWidth > 500) newWidth = 500;
+        
+        currentWidthRef.current = newWidth;
+        sidebarRef.current.style.width = `${newWidth}px`;
+        sceneContainerRef.current.style.width = `calc(100% - ${newWidth}px)`;
+    }, [isDragging]);
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener("mousemove", resize);
+            window.addEventListener("mouseup", stopResizing);
+        } else {
+            window.removeEventListener("mousemove", resize);
+            window.removeEventListener("mouseup", stopResizing);
         }
+        return () => {
+            window.removeEventListener("mousemove", resize);
+            window.removeEventListener("mouseup", stopResizing);
+        };
+    }, [isDragging, resize, stopResizing]);
+
+    const handleToggleSplit = useCallback(() => {
+        setIsSplit(prev => !prev);
     }, []);
 
-    useEffect(() => {
-        const handleGlobalHotkeys = async (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-                e.preventDefault();
-            }
-
-            if (e.key === "F11") {
-                e.preventDefault();
-                try {
-                    if (document.fullscreenElement) {
-                        await document.exitFullscreen();
-                    } else {
-                        await document.documentElement.requestFullscreen();
-                    }
-                } catch (err) {
-                    console.error(`Error transitioning to fullscreen mode: ${err.message}`);
-                }
-            }
-        };
-
-        window.addEventListener("keydown", handleGlobalHotkeys);
-        return () => window.removeEventListener("keydown", handleGlobalHotkeys);
+    const handleToggleViewLink = useCallback(() => {
+        setIsViewLinked(prev => !prev);
     }, []);
-
-    useEffect(() => {
-        if (!isDragging) return;
-
-        const doDrag = (e) => {
-            if (!workspaceRef.current) return;
-
-            const workspaceRect = workspaceRef.current.getBoundingClientRect();
-            const newWidth = e.clientX - workspaceRect.left;
-            const minAllowedWidth = 200;
-            const maxAllowedWidth = 500; 
-
-            if (newWidth >= minAllowedWidth && newWidth <= maxAllowedWidth) {
-                currentWidthRef.current = newWidth;
-                if (sidebarRef.current) {
-                    sidebarRef.current.style.width = `${newWidth}px`;
-                }
-            }
-        };
-
-        const stopDrag = () => {
-            setIsDragging(false);
-            
-            if (sceneContainerRef.current) {
-                sceneContainerRef.current.style.width = "auto";
-                sceneContainerRef.current.style.flexGrow = "1";
-                sceneContainerRef.current.style.flexShrink = "1";
-            }
-
-            setTimeout(() => {
-                if (sceneController1 && typeof sceneController1.onResize === "function") sceneController1.onResize();
-                if (sceneController2 && typeof sceneController2.onResize === "function") sceneController2.onResize();
-                window.dispatchEvent(new Event('resize'));
-            }, 30);
-        };
-
-        window.addEventListener("mousemove", doDrag);
-        window.addEventListener("mouseup", stopDrag);
-
-        return () => {
-            window.removeEventListener("mousemove", doDrag);
-            window.removeEventListener("mouseup", stopDrag);
-        };
-    }, [isDragging, sceneController1, sceneController2]);
-
-    // LẮNG NGHE IS_SPLIT ĐỂ ĐỒNG BỘ CAMERA KHI VỪA KHỞI CHẠY VIEWPORT 2
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            if (sceneController1 && typeof sceneController1.onResize === "function") {
-                sceneController1.onResize();
-            }
-            if (sceneController2 && typeof sceneController2.onResize === "function") {
-                sceneController2.onResize();
-            }
-            window.dispatchEvent(new Event('resize'));
-
-            // Nếu chế độ Split hoạt động và cả 2 controller đã sẵn sàng
-            if (isSplit && sceneController1 && sceneController2) {
-                const camCtrl1 = sceneController1.cameraController;
-                const camCtrl2 = sceneController2.cameraController;
-
-                if (camCtrl1 && camCtrl2) {
-                    // Ép camera 2 copy nguyên trạng thái (Vị trí, hướng xoay) từ camera 1
-                    camCtrl2.state.copy(camCtrl1.state);
-                    camCtrl2.camera.zoom = camCtrl1.camera.zoom;
-                    camCtrl2.camera.updateProjectionMatrix();
-
-                    // Yêu cầu bộ điều khiển camera 2 cập nhật lại ma trận hiển thị lập tức
-                    if (typeof camCtrl2._applyStateToCamera === "function") camCtrl2._applyStateToCamera();
-                    if (typeof camCtrl2._updateClipping === "function") camCtrl2._updateClipping();
-                    if (typeof camCtrl2._requestRender === "function") camCtrl2._requestRender();
-                }
-            }
-        }, 50);
-
-        return () => clearTimeout(timer);
-    }, [isSplit, sceneController1, sceneController2]);
-
-    useEffect(() => {
-        if (!isSplit || !isViewLinked || !sceneController1 || !sceneController2) return;
-
-        const camCtrl1 = sceneController1.cameraController;
-        const camCtrl2 = sceneController2.cameraController;
-        if (!camCtrl1 || !camCtrl2) return;
-
-        let isSyncing = false;
-
-        const syncCameras = (sourceCtrl, targetCtrl) => {
-            if (isSyncing) return;
-            isSyncing = true;
-
-            targetCtrl.state.copy(sourceCtrl.state);
-            targetCtrl.camera.zoom = sourceCtrl.camera.zoom;
-            targetCtrl.camera.updateProjectionMatrix();
-
-            targetCtrl._applyStateToCamera();
-            targetCtrl._updateClipping();
-            targetCtrl._requestRender();
-
-            isSyncing = false;
-        };
-
-        const handleCam1Change = () => syncCameras(camCtrl1, camCtrl2);
-        const handleCam2Change = () => syncCameras(camCtrl2, camCtrl1);
-
-        camCtrl1.addEventListener?.('change', handleCam1Change);
-        camCtrl2.addEventListener?.('change', handleCam2Change);
-
-        handleCam1Change();
-
-        return () => {
-            camCtrl1.removeEventListener?.('change', handleCam1Change);
-            camCtrl2.removeEventListener?.('change', handleCam2Change);
-        };
-    }, [isSplit, isViewLinked, sceneController1, sceneController2]);
 
     return (
-        <div className="main-layout" style={{ 
-            display: "flex", flexDirection: "column", height: "100vh", width: "100vw",
-            background: "#f3f3f3", fontFamily: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif",
-            overflow: "hidden", userSelect: isDragging ? "none" : "auto" 
-        }}>
-            
+        <div 
+            ref={workspaceRef}
+            style={{ 
+                display: "flex", 
+                flexDirection: "column", 
+                height: "100vh", 
+                width: "100vw", 
+                overflow: "hidden",
+                boxSizing: "border-box",
+                backgroundColor: isDark ? "#121212" : "#ffffff", 
+                color: isDark ? "#e0e0e0" : "#111111",           
+                fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                userSelect: isDragging ? "none" : "auto",
+                transition: "background-color 0.2s, color 0.2s"
+            }}
+        >
             <Toolbar 
+                theme={theme}
                 sceneController={sceneController1} 
-                isSplit={isSplit} 
-                onToggleSplit={() => setIsSplit(!isSplit)} 
+                onSceneChanged={triggerSceneUpdate}
+                isSplit={isSplit}
+                onToggleSplit={handleToggleSplit}
                 isViewLinked={isViewLinked}
-                onToggleViewLink={() => setIsViewLinked((v) => !v)}
+                onToggleViewLink={handleToggleViewLink}
                 showTextBlock={showTextBlock}
-                onToggleTextBlock={() => setShowTextBlock(!showTextBlock)}
+                onToggleTextBlock={() => setShowTextBlock(p => !p)}
                 showAxes={showAxes}
-                onToggleAxes={() => setShowAxes(!showAxes)}
+                onToggleAxes={() => setShowAxes(p => !p)}
                 showRuler={showRuler}
-                onToggleRuler={() => setShowRuler(!showRuler)}
+                onToggleRuler={() => setShowRuler(p => !p)}
                 showGrid={showGrid}
-                onToggleGrid={() => setShowGrid(!showGrid)}
+                onToggleGrid={() => setShowGrid(p => !p)}
             />
-            
-            <div ref={workspaceRef} className="workspace-container" style={{ display: "flex", flexGrow: 1, minHeight: 0, width: "100%", position: "relative" }}>
+
+            <div style={{ display: "flex", flex: 1, width: "100%", overflow: "hidden", position: "relative", backgroundColor: isDark ? "#181818" : "#f0f0f0" }}>
                 
-                <aside ref={sidebarRef} style={{ width: `${currentWidthRef.current}px`, minWidth: 0, flexShrink: 0, background: "#fcfcfc", borderRight: "1px solid #d0d0d0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <Sidebar sceneController={sceneController1} />
+                {/* SIDEBAR */}
+                <aside 
+                    ref={sidebarRef} 
+                    style={{ 
+                        width: `${currentWidthRef.current}px`, 
+                        height: "100%", 
+                        background: isDark ? "#181818" : "#f0f0f0", 
+                        flexShrink: 0,
+                        position: "relative",
+                        zIndex: 10,
+                        borderRight: isDark ? "1px solid #2d2d2d" : "1px solid #ccc",
+                        display: "flex",
+                        flexDirection: "column",
+                        overflow: "hidden",
+                        transition: "background 0.2s, border-right 0.2s"
+                    }}
+                >
+                    <Sidebar sceneController={sceneController1} sceneVersion={sceneVersion} theme={theme} />
                 </aside>
 
-                <div className="sidebar-splitter" onMouseDown={startResizing} style={{ width: "4px", cursor: "col-resize", background: isDragging ? "#007acc" : "transparent", zIndex: 10, position: "relative", flexShrink: 0, transition: "background 0.15s ease" }} onMouseEnter={(e) => { if (!isDragging) e.currentTarget.style.background = "#e0e0e0"; }} onMouseLeave={(e) => { if (!isDragging) e.currentTarget.style.background = "transparent"; }} />
+                {/* --- SPLITTER CHÍNH --- */}
+                <div 
+                    onMouseDown={startResizing}
+                    onMouseEnter={() => setIsHoveredSplitter(true)}
+                    onMouseLeave={() => setIsHoveredSplitter(false)}
+                    style={{
+                        width: "8px",
+                        cursor: "col-resize",
+                        background: isDragging ? "rgba(33, 150, 243, 0.08)" : "transparent",
+                        position: "relative",
+                        zIndex: 20,
+                        flexShrink: 0,
+                        marginLeft: "-4px",
+                        marginRight: "-4px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                    }}
+                >
+                    <div style={{
+                        position: "absolute",
+                        left: "3px",
+                        top: 0,
+                        bottom: 0,
+                        width: isDragging || isHoveredSplitter ? "2px" : "1px",
+                        backgroundColor: isDragging || isHoveredSplitter ? "#2196F3" : (isDark ? "#2d2d2d" : "#ccc"),
+                        transition: "background-color 0.15s, width 0.15s"
+                    }} />
+
+                    <div style={{
+                        position: "absolute",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "3px",
+                        zIndex: 25,
+                        opacity: isHoveredSplitter || isDragging ? 1 : 0.25,
+                        transition: "opacity 0.15s"
+                    }}>
+                        {[1, 2, 3].map((item) => (
+                            <div key={item} style={{
+                                width: "3px",
+                                height: "3px",
+                                borderRadius: "50%",
+                                backgroundColor: isDragging || isHoveredSplitter ? "#ffffff" : (isDark ? "#888" : "#555")
+                            }} />
+                        ))}
+                    </div>
+                </div>
 
                 <main 
                     ref={sceneContainerRef}
-                    className="scene-view-container" 
                     style={{ 
-                        flexGrow: 1, flexShrink: 1, minWidth: 0, position: "relative",
-                        background: "#eef2f7", pointerEvents: isDragging ? "none" : "auto",
-                        overflow: "hidden", display: "flex", flexDirection: "row"
+                        width: `calc(100% - ${currentWidthRef.current}px)`, 
+                        height: "100%", 
+                        display: "flex", 
+                        position: "relative",
+                        overflow: "hidden",
+                        gap: isSplit ? "2px" : "0", 
+                        backgroundColor: isDark ? "#2d2d2d" : "#ccc"  
                     }}
                 >
                     {/* Viewport 1 */}
-                    <div style={{ flex: "1 1 50%", width: isSplit ? "50%" : "100%", height: "100%", position: "relative", borderRight: isSplit ? "2px solid #bbb" : "none", boxSizing: "border-box" }}>
+                    <div style={{ flex: "1 1 50%", width: isSplit ? "50%" : "100%", height: "100%", position: "relative", boxSizing: "border-box", background: isDark ? "#1e1e1e" : "#f5f5f5" }}>
                         <Scene 
                             viewportIndex={1}
                             sharedScene={sharedSceneRef.current}
                             onControllerReady={setSceneController1} 
+                            otherController={sceneController2} 
+                            isViewLinked={isViewLinked} 
                             showTextBlock={showTextBlock}
                             showAxes={showAxes}
                             showRuler={showRuler}
                             showGrid={showGrid}
                         />
-                        {isSplit && <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', fontSize: 11, borderRadius: 3, pointerEvents: 'none', fontWeight: 600, zIndex: 100 }}>Viewport 1</div>}
+                        {isSplit && (
+                            <div style={{ 
+                                position: 'absolute', top: 12, left: 12, 
+                                background: isDark ? 'rgba(30, 30, 30, 0.75)' : 'rgba(255, 255, 255, 0.85)', 
+                                color: isDark ? '#aaaaaa' : '#333333', 
+                                padding: '4px 10px', fontSize: 11, borderRadius: 4, 
+                                border: isDark ? '1px solid #444444' : '1px solid #bbb', pointerEvents: 'none', 
+                                fontWeight: 500, letterSpacing: '0.5px', zIndex: 100 
+                            }}>
+                                VIEWPORT 1
+                            </div>
+                        )}
                     </div>
 
                     {/* Viewport 2 */}
                     {isSplit && (
-                        <div style={{ flex: "1 1 50%", width: "50%", height: "100%", position: "relative", boxSizing: "border-box" }}>
+                        <div style={{ flex: "1 1 50%", width: "50%", height: "100%", position: "relative", boxSizing: "border-box", background: isDark ? "#1e1e1e" : "#f5f5f5" }}>
                             <Scene 
                                 viewportIndex={2}
                                 sharedScene={sharedSceneRef.current}
                                 onControllerReady={setSceneController2} 
+                                otherController={sceneController1}
+                                isViewLinked={isViewLinked}
                                 showTextBlock={showTextBlock}
                                 showAxes={showAxes}
                                 showRuler={showRuler}
                                 showGrid={showGrid}
                             />
-                            <div style={{ position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', fontSize: 11, borderRadius: 3, pointerEvents: 'none', fontWeight: 600, zIndex: 100 }}>Viewport 2</div>
+                            <div style={{ 
+                                position: 'absolute', top: 12, left: 12, 
+                                background: isDark ? 'rgba(30, 30, 30, 0.75)' : 'rgba(255, 255, 255, 0.85)', 
+                                color: isDark ? '#aaaaaa' : '#333333', 
+                                padding: '4px 10px', fontSize: 11, borderRadius: 4, 
+                                border: isDark ? '1px solid #444444' : '1px solid #bbb', pointerEvents: 'none', 
+                                fontWeight: 500, letterSpacing: '0.5px', zIndex: 100 
+                            }}>
+                                VIEWPORT 2
+                            </div>
                         </div>
                     )}
                 </main>
                 
             </div>
 
-            <StatusBar sceneController={sceneController1} />
+            {/* Cập nhật StatusBar để nhận các thuộc tính điều khiển Mouse Style + Display Mode */}
+            <StatusBar 
+                sceneController={sceneController1} 
+                theme={theme} 
+                onThemeChange={setTheme} 
+                mouseStyle={mouseStyle}
+                onMouseStyleChange={handleMouseStyleChange}
+                displayMode={displayMode}
+                onDisplayModeChange={handleDisplayModeChange}
+            />
         </div>
     );
 }
