@@ -289,3 +289,37 @@
     color: #fff;
 }
 .confirm-btn:hover { background: #0062a3; }
+
+/* Đảm bảo overlay bao phủ toàn màn hình nhưng cho phép các đối tượng bên dưới hoạt động nếu cần, 
+   hoặc để chặn click tùy thuộc vào logic app của bạn */
+.modal-overlay.backend-modal-clipping {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.2); /* Làm mờ nhẹ nền */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto; 
+    z-index: 9999;
+}
+
+/* Container của Dialog */
+.modal-overlay.backend-modal-clipping .modal-container {
+    background: #fff;
+    border-radius: 6px;
+    padding: 16px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    position: relative;
+    /* Loại bỏ absolute mặc định để thuộc tính transform hoạt động chính xác từ tâm */
+    will-change: transform; 
+}
+
+/* Style cho Theme Dark nếu có */
+.theme-dark .modal-overlay.backend-modal-clipping .modal-container {
+    background: #2d2d2d;
+    color: #fff;
+    border: 1px solid #444;
+}

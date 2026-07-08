@@ -1,6 +1,8 @@
 // Actors/Actor.js
 import * as THREE from "three";
-import { FeatureEdges } from "../Utils/FeatureEdges.js";
+import { FeatureEdges } from "../Filters/FeatureEdges.js";
+import { GeometryFilter } from "../Filters/GeometryFilter.js";
+import { ExternalSurfaceFilter } from "../Filters/ExternalSurfaceFilter.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -32,6 +34,12 @@ export class Actor extends THREE.Group {
         this._scalarTexture = null;
         this._hasVertexColors = false;
 
+        // External-surface (body) state.
+        // body chỉ giữ mặt bao ngoài -> nhẹ hơn, feature edge sạch, stencil cap đúng.
+        this.externalSurface = true;
+        this.keepOuterShell = false;
+        this.externalSurfaceWeldTolerance = null;
+
         // Material Options caching
         let opts = {};
         let name = "Actor";
@@ -44,8 +52,9 @@ export class Actor extends THREE.Group {
             this.mapper = mapper;
         } else {
             this.mapper = null;
-            name = c || "Actor";
-            opts = {};
+            // a = BufferGeometry (hoặc rỗng); b có thể là opts (object) hoặc name (string), c là name.
+            name = (typeof b === "string") ? b : (typeof c === "string" ? c : "Actor");
+            opts = (b && typeof b === "object") ? b : ((c && typeof c === "object") ? c : {});
         }
 
         this._lambertMaterial = new THREE.MeshLambertMaterial({
@@ -59,6 +68,15 @@ export class Actor extends THREE.Group {
         this.featureEdgeWeldTolerance = opts.featureEdgeWeldTolerance ?? null;
         this.wireframeUseScalarColors = opts.wireframeUseScalarColors ?? true;
         this._scalarVisible = opts.showScalar ?? true;
+
+        // External-surface options (mặc định BẬT).
+        this.externalSurface = opts.externalSurface ?? true;
+        this.keepOuterShell = opts.keepOuterShell ?? false;   // true -> ẩn vách ngăn bên trong (ExternalSurfaceFilter)
+        this.externalSurfaceWeldTolerance = opts.externalSurfaceWeldTolerance ?? null;
+        // Tinh chỉnh riêng cho ExternalSurfaceFilter (chỉ dùng khi keepOuterShell = true).
+        this.externalSurfaceConeAngle = opts.externalSurfaceConeAngle ?? 72; // hạ -> siết vách trong; nâng -> tránh thủng vỏ
+        this.externalSurfaceRayCount = opts.externalSurfaceRayCount ?? 64;   // tăng -> chính xác hơn, chậm hơn
+        this.externalSurfaceDebug = opts.externalSurfaceDebug ?? false;      // bật để in số tam giác trước/sau khi lọc
 
         // Initialize Materials
         this.solidColor = new THREE.Color(opts.solidColor ?? 0xcccccc);
@@ -89,13 +107,19 @@ export class Actor extends THREE.Group {
 
         // Extract geometry from mapper or arguments
         let geometry = null;
+        let rawFromMapper = false;
         if (this.mapper) {
             geometry = this.mapper.buildGeometry();
+            rawFromMapper = true;
         } else if (a instanceof THREE.BufferGeometry) {
             geometry = a;
         } else {
             geometry = new THREE.BufferGeometry();
         }
+
+        // BODY = mặt ngoài. Chỉ dispose geometry gốc khi nó do mapper tạo (ta sở hữu);
+        // geometry do người dùng truyền vào (BufferGeometry) thì KHÔNG dispose.
+        geometry = this._toExternalSurface(geometry, rawFromMapper);
 
         // Build Surface Mesh
         const colorTexture = (this.mapper && this.mapper.interpolateScalarsBeforeMapping && geometry.getAttribute("uv") && this.mapper.getColorTexture)
@@ -145,6 +169,70 @@ export class Actor extends THREE.Group {
     }
 
     // ------------------------------------------------------------------
+    // External Surface (body) extraction
+    // ------------------------------------------------------------------
+
+    /**
+     * Chuyển geometry đầy đủ -> chỉ mặt ngoài (ẩn vách ngăn / vỏ con bên trong).
+     * Trả về geometry mới đã nén; nếu externalSurface = false thì trả nguyên bản.
+     * disposeRaw = true: giải phóng geometry gốc (chỉ khi ta sở hữu nó, vd mapper tạo).
+     *
+     * - keepOuterShell = true  -> ExternalSurfaceFilter (occlusion): ẩn HẲN mọi vách
+     *   ngăn / gân / gusset bên trong, chỉ chừa vỏ ngoài cùng -> cắt ra tiết diện đặc.
+     * - keepOuterShell = false -> GeometryFilter: chỉ gộp các mặt trùng khít giữa
+     *   các khối (giữ lại bề mặt khoang rỗng thật, nhẹ và nhanh).
+     */
+    _toExternalSurface(geometry, disposeRaw = false) {
+        if (!this.externalSurface || !geometry) {
+            return geometry;
+        }
+
+        const tol = this.externalSurfaceWeldTolerance ?? 1e-6;
+        let ext;
+
+        if (this.keepOuterShell) {
+            // Vỏ ngoài cùng thật sự: ẩn vách ngăn bên trong bằng occlusion ray test.
+            ext = new ExternalSurfaceFilter()
+                .setWeldTolerance(tol)
+                .setEscapeConeAngle(this.externalSurfaceConeAngle ?? 72)
+                .setRayCount(this.externalSurfaceRayCount ?? 64)
+                .setInputData(geometry)
+                .getOutputData();
+
+            if (this.externalSurfaceDebug) {
+                const triIn = geometry.getIndex()
+                    ? geometry.getIndex().count / 3 : geometry.getAttribute("position").count / 3;
+                const triOut = (ext && ext.getIndex())
+                    ? ext.getIndex().count / 3 : ext.getAttribute("position").count / 3;
+                console.info(`[Actor:ExternalSurface] ${this.name}: ${triIn} -> ${triOut} tam giác `
+                    + `(bỏ ${triIn - triOut}). keepOuterShell=${this.keepOuterShell}`);
+            }
+        } else {
+            // Đường nhẹ: chỉ loại mặt trùng khít giữa các khối (chuẩn VTK vtkGeometryFilter).
+            ext = new GeometryFilter()
+                .setRemoveInternalWalls(true)
+                .setWeldTolerance(tol)
+                .setInputData(geometry)
+                .getOutputData();
+        }
+
+        // Giải phóng bộ nhớ của geometry thô trung gian nếu do mapper sinh ra
+        if (ext !== geometry && disposeRaw) {
+            geometry.dispose();
+        }
+
+        return ext;
+    }
+
+    /** Bật/tắt chế độ mặt ngoài rồi dựng lại body + edge (cần có mapper để build lại). */
+    setExternalSurface(enabled, { keepOuterShell } = {}) {
+        this.externalSurface = !!enabled;
+        if (keepOuterShell !== undefined) this.keepOuterShell = !!keepOuterShell;
+        if (this.mapper) return this.update();
+        return this;
+    }
+
+    // ------------------------------------------------------------------
     // Scalar / Contour State Management
     // ------------------------------------------------------------------
 
@@ -164,8 +252,6 @@ export class Actor extends THREE.Group {
 
     /**
      * True ONLY when a scalar contour / color-map is really being drawn on the surface.
-     * (getScalarVisibility() alone is true by default even for plain models, which is
-     * why highlight coloring used to be suppressed on every object.)
      */
     hasActiveScalarColoring() {
         return this._scalarVisible && (!!this._scalarTexture || this._hasVertexColors);
@@ -178,42 +264,31 @@ export class Actor extends THREE.Group {
         const hasScalar = !!this._scalarTexture || this._hasVertexColors;
         const showScalar = hasScalar && this._scalarVisible;
 
-        // Scalar ON  -> unlit material (MeshBasicMaterial): mọi ánh sáng bị bỏ qua,
-        //               màu contour hiển thị đúng 100% giá trị scalar.
-        // Scalar OFF -> lit material (MeshStandardMaterial): tô màu solid có chiếu sáng.
         const mat = showScalar ? this._surfaceUnlitMaterial : this._surfaceLitMaterial;
 
         if (showScalar) {
-            // Restore mapping scalars onto target channels
             mat.map = this._scalarTexture || null;
             mat.vertexColors = !mat.map && this._hasVertexColors;
             mat.color.set(0xffffff);
         } else if (hasScalar) {
-            // Remove scalar sources and fallback to solid coloring configurations
             mat.map = null;
             mat.vertexColors = false;
             mat.color.copy(this.solidColor);
 
-            // --- GIẢI PHÁP LÀM SÁNG MODEL (chỉ áp dụng cho material có ánh sáng) ---
-            // Cách A: Dùng Emissive làm Ambient giả lập (Sáng đều mọi góc)
-            mat.emissive.copy(this.solidColor).multiplyScalar(0.3); // Thêm 30% độ sáng ambient
+            mat.emissive.copy(this.solidColor).multiplyScalar(0.3);
 
-            // Cách B: Tăng tính chất khuếch tán (Diffusion), triệt tiêu phản xạ gắt
             if (this.surface.userData.initialRoughness === undefined) {
                 this.surface.userData.initialRoughness = mat.roughness;
             }
-            mat.roughness = 1.0; // Tối đa hóa khả năng tán xạ ánh sáng
+            mat.roughness = 1.0;
         }
         mat.needsUpdate = true;
 
-        // Hoán đổi material trên surface mesh nếu cần
         if (this.surface.material !== mat) {
             this.surface.material = mat;
-            // Reset cờ clone của PickingController vì material gốc đã thay đổi
             this.surface.userData.isMaterialCloned = false;
         }
 
-        // Force rebuild surface mesh if currently active in wireframe mode
         if (this.displayMode === DisplayMode.WIREFRAME) {
             this.showWireframe();
         }
@@ -224,7 +299,6 @@ export class Actor extends THREE.Group {
     // Edge Highlight Support (color + thickness)
     // ------------------------------------------------------------------
 
-    /** Set the boundary / feature edge color. */
     setEdgeColor(color) {
         if (this._featureEdgeMaterial) {
             this._featureEdgeMaterial.color.set(color);
@@ -233,16 +307,10 @@ export class Actor extends THREE.Group {
         return this;
     }
 
-    /** Alias kept for API compatibility with PickingController. */
     setFeatureEdgeColor(color) {
         return this.setEdgeColor(color);
     }
 
-    /**
-     * Set the boundary / feature edge line thickness (in pixels).
-     * Boundary edges now use LineSegments2 + LineMaterial ("fat lines"),
-     * so linewidth is rendered correctly on every WebGL driver.
-     */
     setFeatureEdgeThickness(thickness) {
         if (this._featureEdgeMaterial) {
             this._featureEdgeMaterial.linewidth = thickness;
@@ -251,7 +319,6 @@ export class Actor extends THREE.Group {
         return this;
     }
 
-    /** Restore the edge to its resting color/thickness captured at construction. */
     resetEdgeAppearance() {
         this.setEdgeColor(this._baseEdgeColor);
         this.setFeatureEdgeThickness(this._baseEdgeThickness);
@@ -265,17 +332,11 @@ export class Actor extends THREE.Group {
     showWireframe() {
         this.displayMode = DisplayMode.WIREFRAME;
 
-        // Disable solid surfaces and boundaries
         this.surface.visible = false;
         if (this.boundaryEdge) this.boundaryEdge.visible = false;
 
-        // Clean any existing wireframe overlays bound to the surface mesh directly
         this._disposeWireframeOverlay();
 
-        // Build specific line material and geometry representation for wireframe.
-        // Nguồn scalar theo đúng thứ tự ưu tiên của surface:
-        //   1) texture + uv (interpolateScalarsBeforeMapping)
-        //   2) vertex colors (attribute "color")
         const srcGeom = this.surface.geometry;
         const wantScalar = this.wireframeUseScalarColors && this._scalarVisible;
         const useTexture = wantScalar && !!this._scalarTexture && !!srcGeom.getAttribute("uv");
@@ -351,12 +412,6 @@ export class Actor extends THREE.Group {
     // Wireframe Structural Builder
     // ------------------------------------------------------------------
 
-    /**
-     * Xây geometry line segments cho wireframe, sao chép kèm các attribute mang
-     * dữ liệu scalar để đường mesh hiển thị đúng màu contour:
-     *   - opts.color: copy attribute "color" (vertex colors)
-     *   - opts.uv:    copy attribute "uv" (dùng với texture LUT của mapper)
-     */
     _buildScalarWireframeGeometry(src, opts = {}) {
         const pos = src.getAttribute("position");
         const col = opts.color ? src.getAttribute("color") : null;
@@ -415,12 +470,6 @@ export class Actor extends THREE.Group {
         if (!this.surface || !this.surface.geometry) return;
         this._disposeBoundaryEdges();
 
-        // Trích xuất theo mô hình vtkFeatureEdges (class độc lập FeatureEdges):
-        //   - Boundary edges: đường bao của vật thể (cạnh chỉ thuộc 1 tam giác)
-        //   - Feature edges:  đường gấp khúc có góc nhị diện >= featureEdgeAngle
-        //   - Non-manifold:   cạnh thuộc > 2 tam giác (mặc định bật, giống VTK)
-        // Đỉnh trùng vị trí được hàn theo tolerance tương đối với bounding box,
-        // và phép thử góc không phụ thuộc chiều winding của tam giác.
         const edgesGeom = FeatureEdges.extract(this.surface.geometry, {
             featureAngle: this.featureEdgeAngle,
             boundaryEdges: true,
@@ -428,11 +477,9 @@ export class Actor extends THREE.Group {
             nonManifoldEdges: true,
             manifoldEdges: false,
             windingIndependent: true,
-            weldTolerance: this.featureEdgeWeldTolerance // null => tự tính (diag * 1e-4)
+            weldTolerance: this.featureEdgeWeldTolerance
         });
 
-        // Chuyển geometry line-segments thường sang LineSegmentsGeometry (fat lines).
-        // fromEdgesGeometry đọc trực tiếp mảng position nên geometry phải non-indexed.
         const flatGeom = edgesGeom.getIndex() ? edgesGeom.toNonIndexed() : edgesGeom;
         const lineGeom = new LineSegmentsGeometry().fromEdgesGeometry(flatGeom);
         if (flatGeom !== edgesGeom) flatGeom.dispose();
@@ -441,14 +488,10 @@ export class Actor extends THREE.Group {
         this.boundaryEdge = new LineSegments2(lineGeom, this._featureEdgeMaterial);
         this.boundaryEdge.computeLineDistances();
         this.boundaryEdge.name = `${this.name}__boundaryEdges`;
-        this.boundaryEdge.renderOrder = 2; // Elevate render order above solid surface geometry layer
+        this.boundaryEdge.renderOrder = 2;
 
-        // LineSegments2 kế thừa Mesh (isMesh = true) => loại khỏi raycasting
-        // để PickingController không pick nhầm vào đường edge.
         this.boundaryEdge.raycast = () => {};
 
-        // LineMaterial cần biết kích thước viewport để đổi linewidth (px) sang NDC.
-        // Tự cập nhật trước mỗi lần render nên không cần hook sự kiện resize.
         this.boundaryEdge.onBeforeRender = (renderer) => {
             renderer.getSize(this._featureEdgeMaterial.resolution);
         };
@@ -493,13 +536,13 @@ export class Actor extends THREE.Group {
         if (!this.mapper) return this;
         const oldGeom = this.surface.geometry;
 
-        this.surface.geometry = this.mapper.buildGeometry();
+        // XỬ LÝ CHÍNH SÁC TẠI ĐÂY: Build geometry mới từ mapper -> lọc bỏ vách trong -> gán lại cho surface
+        this.surface.geometry = this._toExternalSurface(this.mapper.buildGeometry(), true);
         if (oldGeom) oldGeom.dispose();
 
         this._applyScalarColorSource();
         this._buildBoundaryEdges();
 
-        // Re-trigger current display configurations
         this.setDisplayMode(this.displayMode);
         return this;
     }
@@ -529,7 +572,6 @@ export class Actor extends THREE.Group {
         if (this._surfaceUnlitMaterial) this._surfaceUnlitMaterial.dispose();
         if (this.surface) {
             if (this.surface.geometry) this.surface.geometry.dispose();
-            // Dispose material đang gắn nếu nó là bản clone (do PickingController tạo)
             if (this.surface.material &&
                 this.surface.material !== this._surfaceLitMaterial &&
                 this.surface.material !== this._surfaceUnlitMaterial) {

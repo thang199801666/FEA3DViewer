@@ -1,79 +1,84 @@
-import { PolyData } from '../Core/PolyData.js';
-import { Filter } from './Filter.js';
+// Filters/ContourFilter.js
+// Đường/mặt đẳng trị trên lưới tam giác theo trường scalars active (Marching Triangles).
+// ĐÃ SỬA để dùng CHUẨN API chung: extends Filter + getOutputData(), đọc/ghi PolyData
+// đúng cách (points là Float32Array, polys là mảng-các-mảng).
 
-/**
- * ContourFilter - Trích xuất đường đồng mức (Isoline) trên bề mặt lưới tam giác,
- * dựa trên trường Scalars đang active. Tương tự vtkContourFilter, nhưng áp dụng
- * cho bề mặt (surface mesh) thay vì khối (volume) — nên dùng thuật toán
- * "Marching Triangles" thay vì Marching Cubes/Tetrahedra:
- *
- * Với mỗi tam giác, kiểm tra lần lượt 3 cạnh; nếu isoValue nằm giữa 2 đỉnh của
- * 1 cạnh thì nội suy tuyến tính ra điểm cắt. Một tam giác bị cắt hợp lệ sẽ luôn
- * cho đúng 2 điểm giao -> nối chúng lại thành 1 đoạn thẳng (line segment).
- */
+import { Filter } from "./Filter.js";
+import { PolyData } from "../Core/PolyData.js";
+
 export class ContourFilter extends Filter {
     constructor() {
         super();
-        this.isoValues = [0.5]; // Có thể trích xuất nhiều đường đồng mức cùng lúc
+        this.isoValues = [0.5];
+        this.scalarArrayName = null; // null = dùng active scalars
     }
 
-    setValue(value) { this.isoValues = [value]; return this; }
-    setValues(values) { this.isoValues = values; return this; }
+    setValue(v) { this.isoValues = [v]; return this; }
+    setValues(values) { this.isoValues = [...values]; return this; }
 
-    requestData(input) {
-        const points = input.getPoints();
-        const polys = input.getPolys();
-        const scalars = input.getScalars();
+    /** Sinh nhanh N đường đều nhau trong [min,max]. */
+    generateValues(n, [mn, mx]) {
+        this.isoValues = [];
+        for (let i = 0; i < n; i++) this.isoValues.push(mn + (mx - mn) * (i + 0.5) / n);
+        return this;
+    }
 
-        if (!scalars) {
-            console.warn('[ContourFilter] PolyData không có Scalars active, không thể tính contour.');
+    setScalarArrayName(name) { this.scalarArrayName = name; return this; }
+
+    getOutputData() {
+        const input = this.input;
+        if (!input) throw new Error("ContourFilter: chưa có input");
+
+        const points = input.points;
+        const tris = input.getTriangles(); // [a,b,c, ...]
+        const scalarArr = this.scalarArrayName
+            ? input.pointData.getArray(this.scalarArrayName)
+            : input.pointData.getScalars();
+
+        if (!scalarArr) {
+            console.warn("[ContourFilter] PolyData không có scalars active.");
             return new PolyData();
         }
+        const scalars = scalarArr.values;
 
         const outPoints = [];
         const outLines = [];
-        const outScalars = []; // giá trị isoValue tại mỗi điểm sinh ra, dùng để tô màu đường theo mức
+        const outScalars = [];
 
-        const interp = (iA, iB, isoValue) => {
+        const interp = (iA, iB, iso) => {
             const sA = scalars[iA], sB = scalars[iB];
-            const t = (isoValue - sA) / (sB - sA);
-            const ax = points[iA * 3], ay = points[iA * 3 + 1], az = points[iA * 3 + 2];
-            const bx = points[iB * 3], by = points[iB * 3 + 1], bz = points[iB * 3 + 2];
-            return [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t];
+            const t = (iso - sA) / (sB - sA);
+            const k = 3;
+            return [
+                points[iA * k]     + (points[iB * k]     - points[iA * k])     * t,
+                points[iA * k + 1] + (points[iB * k + 1] - points[iA * k + 1]) * t,
+                points[iA * k + 2] + (points[iB * k + 2] - points[iA * k + 2]) * t,
+            ];
         };
 
-        for (const isoValue of this.isoValues) {
-            for (let c = 0; c < polys.length; c += 3) {
-                const ia = polys[c], ib = polys[c + 1], ic = polys[c + 2];
+        for (const iso of this.isoValues) {
+            for (let c = 0; c + 2 < tris.length; c += 3) {
+                const ia = tris[c], ib = tris[c + 1], ic = tris[c + 2];
                 const sa = scalars[ia], sb = scalars[ib], sc = scalars[ic];
-
                 const edges = [[ia, ib, sa, sb], [ib, ic, sb, sc], [ic, ia, sc, sa]];
                 const crossings = [];
-
                 for (const [p1, p2, s1, s2] of edges) {
                     const lo = Math.min(s1, s2), hi = Math.max(s1, s2);
-                    if (isoValue >= lo && isoValue <= hi && s1 !== s2) {
-                        crossings.push(interp(p1, p2, isoValue));
-                    }
+                    if (iso >= lo && iso <= hi && s1 !== s2) crossings.push(interp(p1, p2, iso));
                 }
-
-                // Tam giác bị isoValue cắt ngang đúng nghĩa luôn cho ra chính xác 2 điểm giao
                 if (crossings.length === 2) {
-                    const baseIndex = outPoints.length / 3;
+                    const base = outPoints.length / 3;
                     outPoints.push(...crossings[0], ...crossings[1]);
-                    outLines.push(baseIndex, baseIndex + 1);
-                    outScalars.push(isoValue, isoValue);
+                    outLines.push([base, base + 1]);
+                    outScalars.push(iso, iso);
                 }
             }
         }
 
-        const output = new PolyData();
-        output.setPoints(outPoints);
-        output.setLines(outLines);
-        output.setPolys([]); // Contour chỉ sinh line, không có mặt tam giác
-        if (outScalars.length > 0) {
-            output.addPointDataArray('Contour', outScalars, 1, { setActiveScalar: true });
-        }
-        return output;
+        const out = new PolyData();
+        out.setPoints(Float32Array.from(outPoints));
+        out.lines = outLines;
+        if (outScalars.length) out.addPointDataArray("Contour", outScalars, 1, { setActiveScalar: true });
+        return out;
     }
 }

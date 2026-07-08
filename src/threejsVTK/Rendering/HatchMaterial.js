@@ -1,0 +1,58 @@
+// Rendering/HatchMaterial.js
+// Vật liệu KẺ GẠCH (hatch) cho mặt cắt kiểu bản vẽ kỹ thuật: nền đặc + các đường
+// chéo cách đều (theo không gian màn hình nên khoảng cách gạch ổn định khi zoom).
+//
+//   const mat = makeHatchMaterial({ angle: 45, spacing: 8, lineColor: 0x222222, fillColor: 0xcfd8dc });
+
+import * as THREE from "three";
+
+const VERT = /* glsl */`
+varying vec3 vNormal;
+void main() {
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const FRAG = /* glsl */`
+precision highp float;
+uniform vec3  uFillColor, uLineColor, uLightDir;
+uniform float uSpacing, uAngle, uLineWidth, uAmbient, uOpacity;
+varying vec3 vNormal;
+void main() {
+    // Toạ độ dọc theo phương vuông góc với đường gạch, tính bằng pixel màn hình.
+    float c = cos(uAngle), s = sin(uAngle);
+    float coord = gl_FragCoord.x * c + gl_FragCoord.y * s;
+    float f = mod(coord, uSpacing);
+    float line = 1.0 - smoothstep(0.0, uLineWidth, min(f, uSpacing - f));
+
+    vec3 base = mix(uFillColor, uLineColor, line);
+    float diff = abs(dot(normalize(vNormal), normalize(uLightDir)));
+    base *= uAmbient + (1.0 - uAmbient) * diff;
+    gl_FragColor = vec4(base, uOpacity);
+}`;
+
+export function makeHatchMaterial(options = {}) {
+    const {
+        angle = 45, spacing = 8, lineWidth = 1.5,
+        fillColor = 0xe0e0e0, lineColor = 0x303030,
+        ambient = 0.55, lightDir = [0.5, 0.7, 1.0], opacity = 1.0,
+        doubleSide = true,
+    } = options;
+
+    return new THREE.ShaderMaterial({
+        vertexShader: VERT,
+        fragmentShader: FRAG,
+        side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+        transparent: opacity < 1.0,
+        uniforms: {
+            uFillColor: { value: new THREE.Color(fillColor) },
+            uLineColor: { value: new THREE.Color(lineColor) },
+            uSpacing: { value: spacing },
+            uAngle: { value: (angle * Math.PI) / 180 },
+            uLineWidth: { value: lineWidth },
+            uAmbient: { value: ambient },
+            uLightDir: { value: new THREE.Vector3(...lightDir) },
+            uOpacity: { value: opacity },
+        },
+    });
+}

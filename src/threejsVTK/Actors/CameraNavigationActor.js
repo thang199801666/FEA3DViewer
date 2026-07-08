@@ -1,8 +1,11 @@
 // Actors/CameraNavigationActor.js
-// Blender-style navigation gizmo overlay. Instead of an external controller,
-// it drives a vtkCamera (Rendering/Camera): drag rotates the view around the
-// camera's focal point; clicking an axis snaps to that view with a smooth
-// animation advanced inside update(). Render it into a corner each frame.
+// Blender-style navigation gizmo overlay. It drives a vtkCamera (Rendering/Camera):
+//   - clicking an axis TIP snaps to that view (smooth animation in update());
+//   - dragging an axis TIP rotates the view around the camera's focal point;
+//   - dragging an axis SHAFT translates the scene model along that axis
+//     (emitted through the onTranslate callback, since this actor has no model ref);
+//   - anything else inside the gizmo does nothing.
+// Render it into a corner each frame.
 import * as THREE from "three";
 
 const AXES = [
@@ -66,10 +69,19 @@ export class CameraNavigationActor {
     this.axisLength = options.axisLength ?? 1;
     this.spriteScale = options.spriteScale ?? 0.34;
     this.dragRotateSpeed = options.dragRotateSpeed ?? 0.6;
+    // Speed of the click-to-snap camera animation (0..1 per frame; 1 = instant).
     this.animateSpeed = options.animateSpeed ?? 0.15;
-    this.onSelect = options.onSelect || null;
+    // Pick tolerance (in gizmo-scene units) for grabbing the thin shaft lines.
+    this.lineThreshold = options.lineThreshold ?? 0.12;
+
     this.onChange = options.onChange || null;
     this.onDragStart = options.onDragStart || null;
+    // Called when a tip is clicked (not dragged): (axisDir, axisName).
+    this.onSelect = options.onSelect || null;
+    // Called while dragging an axis shaft. Receives an incremental world-space
+    // translation vector (THREE.Vector3) and the axis name ("+x", "+y", "+z").
+    // The host must add this to the target model's position and re-render.
+    this.onTranslate = options.onTranslate || null;
 
     // overlay scene + camera for the gizmo widget itself
     this.scene = new THREE.Scene();
@@ -77,15 +89,21 @@ export class CameraNavigationActor {
     this.gizmoCam = new THREE.OrthographicCamera(-1.6, 1.6, 1.6, -1.6, 0.1, 100);
     this.camDist = 5;
 
-    this.isDragging = false;
-    this.previousPointerPosition = { x: 0, y: 0 };
+    // Interaction mode: null (idle), "rotate" (dragging an axis tip),
+    // or "translate" (dragging an axis shaft).
+    this._mode = null;
+    // A tip pressed but not yet dragged past the threshold -> pending click (snap).
+    this._pendingHandle = null;
+    // Smooth click-to-snap animation state (advanced inside update()).
     this._snapping = false;
     this._snapTarget = null;
+    this.previousPointerPosition = { x: 0, y: 0 };
 
     this.lineGroup = new THREE.Group();
     this.scene.add(this.lineGroup);
 
-    this.handles = [];
+    this.handles = []; // axis tips (rotate handles)
+    this.shafts = [];  // positive-axis lines (translate handles)
     AXES.forEach((axis) => {
       const sprite = makeAxisSprite(axis);
       sprite.position.copy(axis.dir).multiplyScalar(this.axisLength);
@@ -102,13 +120,17 @@ export class CameraNavigationActor {
         const lineMat = new THREE.LineBasicMaterial({ color: axis.color, transparent: true, opacity: 0.95, depthTest: false });
         const line = new THREE.Line(lineGeo, lineMat);
         line.renderOrder = 0;
+        line.userData.axis = axis;
         this.lineGroup.add(line);
+        this.shafts.push({ axis, line, baseColor: new THREE.Color(axis.color) });
       }
     });
 
     this.raycaster = new THREE.Raycaster();
+    this.raycaster.params.Line.threshold = this.lineThreshold;
     this.pointerNDC = new THREE.Vector2();
     this.hovered = null;
+    this._hoverKey = null;
 
     this._onPointerMove = this._onPointerMove.bind(this);
     this._onPointerDown = this._onPointerDown.bind(this);
@@ -168,12 +190,15 @@ export class CameraNavigationActor {
     renderer.autoClear = previousAutoClear;
   }
 
-  // --- snap-to-axis animation, driving the vtkCamera ---
+  // --- click-to-snap animation, driving the vtkCamera ---
   _advanceSnap() {
     const vcam = this.vtkCamera;
     const cam = vcam.getThreeCamera();
     const focal = vcam.getFocalPoint();
-    const dist = vcam.getDistance() || cam.position.distanceTo(focal) || 1;
+    const dist =
+      (typeof vcam.getDistance === "function" ? vcam.getDistance() : 0) ||
+      cam.position.distanceTo(focal) ||
+      1;
 
     const qCur = cam.quaternion.clone().slerp(this._snapTarget, this.animateSpeed);
     const back = new THREE.Vector3(0, 0, 1).applyQuaternion(qCur);
@@ -202,26 +227,49 @@ export class CameraNavigationActor {
     return { ndcX, ndcY, localX, localY };
   }
 
+  // Returns { type: "tip"|"shaft", axis, handle?, shaft? } or null.
+  // Tips take priority over shafts where they overlap (near the axis end).
   _pick(clientX, clientY) {
     const ndc = this._pointerInRect(clientX, clientY);
     if (!ndc) return null;
     this.pointerNDC.set(ndc.ndcX, ndc.ndcY);
     this.raycaster.setFromCamera(this.pointerNDC, this.gizmoCam);
+
     const sprites = this.handles.map((h) => h.sprite);
-    const hits = this.raycaster.intersectObjects(sprites, false);
-    if (hits.length === 0) return null;
-    return this.handles.find((h) => h.sprite === hits[0].object) || null;
+    const tipHits = this.raycaster.intersectObjects(sprites, false);
+    if (tipHits.length > 0) {
+      const handle = this.handles.find((h) => h.sprite === tipHits[0].object);
+      if (handle) return { type: "tip", axis: handle.axis, handle };
+    }
+
+    const lines = this.shafts.map((s) => s.line);
+    const shaftHits = this.raycaster.intersectObjects(lines, false);
+    if (shaftHits.length > 0) {
+      const shaft = this.shafts.find((s) => s.line === shaftHits[0].object);
+      if (shaft) return { type: "shaft", axis: shaft.axis, shaft };
+    }
+    return null;
   }
 
-  _setHover(handle) {
-    if (this.hovered === handle) return;
-    if (this.hovered) this._refreshSprite(this.hovered, false);
-    this.hovered = handle;
+  _setHover(pick) {
+    const key = pick ? `${pick.type}:${pick.axis.name}` : null;
+    if (this._hoverKey === key) return;
+
+    // clear previous highlight
     if (this.hovered) {
-      this._refreshSprite(this.hovered, true);
-      this.renderer.domElement.style.cursor = "pointer";
+      if (this.hovered.type === "tip") this._refreshSprite(this.hovered.handle, false);
+      else this._setShaftHighlight(this.hovered.shaft, false);
+    }
+
+    this.hovered = pick;
+    this._hoverKey = key;
+
+    if (pick) {
+      if (pick.type === "tip") this._refreshSprite(pick.handle, true);
+      else this._setShaftHighlight(pick.shaft, true);
+      this.renderer.domElement.style.cursor = "grab";
     } else {
-      this.renderer.domElement.style.cursor = this.isDragging ? "grabbing" : "";
+      this.renderer.domElement.style.cursor = this._mode ? "grabbing" : "";
     }
   }
 
@@ -233,13 +281,83 @@ export class CameraNavigationActor {
     newSprite.material.dispose();
   }
 
+  _setShaftHighlight(shaft, highlight) {
+    if (highlight) {
+      shaft.line.material.color.copy(shaft.baseColor).lerp(new THREE.Color(0xffffff), 0.55);
+      shaft.line.material.opacity = 1;
+    } else {
+      shaft.line.material.color.copy(shaft.baseColor);
+      shaft.line.material.opacity = 0.95;
+    }
+    shaft.line.material.needsUpdate = true;
+  }
+
+  // Capture a stable orbit pivot ON the current view axis. The vtkCamera's stored
+  // focal point can be stale / off-axis after the main interactor orbits (and for
+  // an ortho camera the focal distance isn't recoverable from the THREE camera),
+  // which makes the first rotate frame's lookAt() reorient the view -> a visible
+  // "jump". Anchoring the pivot to the current forward direction avoids that.
+  _beginRotate() {
+    const vcam = this.vtkCamera;
+    const cam = vcam?.getThreeCamera();
+    if (!cam) { this._rotFocal = new THREE.Vector3(); return; }
+
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion).normalize();
+    const stored = vcam.getFocalPoint ? vcam.getFocalPoint() : new THREE.Vector3();
+    // Focal depth = projection of the stored focal onto the current view axis,
+    // so the pivot sits exactly ahead of the camera (no first-frame reorientation).
+    let dist = stored.clone().sub(cam.position).dot(forward);
+    if (!(dist > 1e-6)) {
+      dist =
+        (typeof vcam.getDistance === "function" ? vcam.getDistance() : 0) ||
+        cam.position.distanceTo(stored) ||
+        1;
+    }
+    this._rotFocal = cam.position.clone().addScaledVector(forward, dist);
+  }
+
+  // Precompute how a world-space move of one unit along `axis` maps to screen
+  // pixels, anchored at the camera focal point (near the model). We reuse this
+  // for the whole drag so translation stays stable and linear.
+  _beginTranslate(axis) {
+    const vcam = this.vtkCamera;
+    const cam = vcam?.getThreeCamera();
+    this._transValid = false;
+    if (!cam) return;
+
+    const focal = vcam.getFocalPoint();
+    const axisDir = axis.dir.clone().normalize();
+    const W = this.container.clientWidth;
+    const H = this.container.clientHeight;
+
+    const a = focal.clone().project(cam);
+    const b = focal.clone().add(axisDir).project(cam);
+    const sa = new THREE.Vector2((a.x * 0.5 + 0.5) * W, (-a.y * 0.5 + 0.5) * H);
+    const sb = new THREE.Vector2((b.x * 0.5 + 0.5) * W, (-b.y * 0.5 + 0.5) * H);
+    const screenVec = sb.sub(sa);
+    const pxPerWorld = screenVec.length();
+
+    // Axis nearly parallel to the view direction → projects to ~0 on screen,
+    // so dragging can't sensibly translate along it. Disable this drag.
+    if (pxPerWorld < 1e-2) return;
+
+    this._transAxisDir = axisDir;
+    this._transAxisName = axis.name;
+    this._transScreenDir = screenVec.multiplyScalar(1 / pxPerWorld); // unit screen dir
+    this._transPxPerWorld = pxPerWorld;
+    this._transValid = true;
+  }
+
   _onPointerMove(e) {
-    if (this._pendingHandle && !this.isDragging) {
+    // A pending tip press becomes a rotate only after moving past the threshold;
+    // a release before that counts as a click (handled in _onPointerUp -> snap).
+    if (this._pendingHandle && !this._mode) {
       const dx = e.clientX - this._dragStartPosition.x;
       const dy = e.clientY - this._dragStartPosition.y;
       if (Math.hypot(dx, dy) > 4) {
         this._pendingHandle = null;
-        this.isDragging = true;
+        this._mode = "rotate";
+        this._beginRotate();
         this.renderer.domElement.style.cursor = "grabbing";
         this._setHover(null);
         this.onDragStart?.();
@@ -249,14 +367,15 @@ export class CameraNavigationActor {
       }
     }
 
-    if (this.isDragging) {
+    // --- dragging an axis tip → rotate the view ---
+    if (this._mode === "rotate") {
       const vcam = this.vtkCamera;
       const cam = vcam?.getThreeCamera();
       if (!cam) { this.previousPointerPosition = { x: e.clientX, y: e.clientY }; return; }
 
       const deltaX = e.clientX - this.previousPointerPosition.x;
       const deltaY = e.clientY - this.previousPointerPosition.y;
-      const target = vcam.getFocalPoint();
+      const target = this._rotFocal || vcam.getFocalPoint();
 
       const thetaAngle = -(deltaX / this.size) * Math.PI * this.dragRotateSpeed;
       const phiAngle = -(deltaY / this.size) * Math.PI * this.dragRotateSpeed;
@@ -278,6 +397,24 @@ export class CameraNavigationActor {
       return;
     }
 
+    // --- dragging an axis shaft → translate the model along that axis ---
+    if (this._mode === "translate") {
+      if (this._transValid) {
+        const dx = e.clientX - this.previousPointerPosition.x;
+        const dy = e.clientY - this.previousPointerPosition.y;
+        const along = dx * this._transScreenDir.x + dy * this._transScreenDir.y; // px along axis
+        const worldDelta = along / this._transPxPerWorld;
+        if (worldDelta !== 0) {
+          const t = this._transAxisDir.clone().multiplyScalar(worldDelta);
+          this.onTranslate?.(t, this._transAxisName);
+          this.onChange?.();
+        }
+      }
+      this.previousPointerPosition = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
+    // --- idle: just hover feedback over tips/shafts ---
     this._setHover(this._pick(e.clientX, e.clientY));
   }
 
@@ -285,11 +422,15 @@ export class CameraNavigationActor {
     const insideRect = this._pointerInRect(e.clientX, e.clientY);
     if (!insideRect) return;
 
-    // Prevent the main RenderWindowInteractor (registered later) from also
-    // starting an orbit when pressing inside the gizmo. Requires this actor's
+    // The gizmo owns its corner: swallow the event so the main
+    // RenderWindowInteractor doesn't also start an orbit. Requires this actor's
     // listeners to be registered BEFORE interactor.initialize().
     e.stopImmediatePropagation();
     e.stopPropagation();
+
+    const pick = this._pick(e.clientX, e.clientY);
+    // Empty space inside the gizmo → do nothing.
+    if (!pick) return;
 
     if (typeof e.pointerId === "number" && this.renderer.domElement.setPointerCapture) {
       try {
@@ -298,20 +439,23 @@ export class CameraNavigationActor {
       } catch (err) {}
     }
 
-    const handle = this._pick(e.clientX, e.clientY);
-    if (handle) {
-      this._pendingHandle = handle;
+    this.previousPointerPosition = { x: e.clientX, y: e.clientY };
+
+    if (pick.type === "tip") {
+      // Defer: a click (no drag) snaps to this view; a drag rotates.
+      this._pendingHandle = pick.handle;
       this._dragStartPosition = { x: e.clientX, y: e.clientY };
-      this.previousPointerPosition = { x: e.clientX, y: e.clientY };
     } else {
-      this.isDragging = true;
-      this.previousPointerPosition = { x: e.clientX, y: e.clientY };
+      // Grab an axis shaft → translate the model along that axis.
+      this._beginTranslate(pick.axis);
+      this._mode = "translate";
       this.renderer.domElement.style.cursor = "grabbing";
       this.onDragStart?.();
     }
   }
 
   _onPointerUp() {
+    // Tip pressed and released without dragging → snap to that axis view.
     if (this._pendingHandle) {
       const handle = this._pendingHandle;
       this._pendingHandle = null;
@@ -322,11 +466,12 @@ export class CameraNavigationActor {
       this._snapTarget = new THREE.Quaternion().setFromRotationMatrix(m);
       this._snapping = true;
 
-      if (this.onSelect) this.onSelect(handle.axis.dir.clone(), handle.axis.name);
+      this.onSelect?.(handle.axis.dir.clone(), handle.axis.name);
     }
 
-    if (this.isDragging) {
-      this.isDragging = false;
+    if (this._mode) {
+      this._mode = null;
+      this._transValid = false;
       this.renderer.domElement.style.cursor = "";
     }
 
@@ -337,7 +482,7 @@ export class CameraNavigationActor {
   }
 
   _onPointerLeave() {
-    if (!this.isDragging) {
+    if (!this._mode) {
       this._setHover(null);
       this._pendingHandle = null;
     }

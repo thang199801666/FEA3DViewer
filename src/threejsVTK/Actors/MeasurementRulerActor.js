@@ -11,11 +11,11 @@ export class MeasurementRulerActor {
     this.camera = camera;
 
     // Configuration options
-    this.color = options.color ?? 0xffffff; // Đổi mặc định sang màu trắng
+    this.color = options.color ?? 0xffffff; // Default color is white
     this.targetPixelWidth = options.targetPixelWidth ?? 120;
     this.tickHeight = options.tickHeight ?? 0.05; 
     
-    // Tăng canvas font size gốc lên để render chữ độ phân giải cao, tránh bị nhòe vỡ hình
+    // Increase the base canvas font size to render high-resolution text and avoid blurriness
     this.fontSize = options.fontSize ?? 90; 
 
     // Create a group to hold all ruler graphic components
@@ -25,14 +25,14 @@ export class MeasurementRulerActor {
     // Initialize geometry components placeholder
     this.lineGeometry = new THREE.BufferGeometry();
     
-    // Tạo chất liệu màu trắng, tắt depth để thước luôn hiển thị đè lên trên mô hình 3D
+    // Create white material, disable depth test/write so the ruler always renders on top of 3D models
     this.lineMaterial = new THREE.LineBasicMaterial({ 
       color: this.color, 
       depthTest: false, 
       depthWrite: false
     });
     
-    // Dùng LineSegments để xếp chồng các nét, giúp giả lập độ dày pixel cho thước
+    // Use LineSegments to stack lines, simulating pixel thickness for the ruler
     this.rulerLine = new THREE.LineSegments(this.lineGeometry, this.lineMaterial);
     this.rulerLine.renderOrder = 10;
     this.group.add(this.rulerLine);
@@ -48,7 +48,7 @@ export class MeasurementRulerActor {
   update(containerWidth) {
     if (!this.camera || !containerWidth || containerWidth === 0) return;
 
-    // 1. Tính toán tỉ lệ pixel sang world units
+    // 1. Calculate pixel-to-world units ratio
     const totalWorldWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
     const unitsPerPixel = totalWorldWidth / containerWidth;
 
@@ -57,18 +57,18 @@ export class MeasurementRulerActor {
 
     const halfW = niceWorldUnits / 2;
 
-    // Chiều cao vạch đứng (7 pixel cố định trên màn hình)
+    // Height of the vertical ticks (fixed 7 pixels on screen)
     const desiredTickPixelHeight = 7; 
     const dynamicTickHeight = desiredTickPixelHeight * unitsPerPixel; 
 
-    // Độ dày mong muốn cho thanh thước (2.5 pixel cố định trên màn hình)
+    // Desired thickness for the ruler line (fixed 2.5 pixels on screen)
     const thickness = 2.5 * unitsPerPixel;
 
     // ----------------------------------------------------------------
-    // Vẽ các đường kép song song lệch nhau một khoảng `thickness` để tạo độ dày đậm
+    // Draw parallel double lines offset by `thickness` to simulate line weight
     // ----------------------------------------------------------------
     const vertices = new Float32Array([
-      // --- Nét cơ bản chính ---
+      // --- Main base lines ---
       -halfW,  dynamicTickHeight, 0,   
       -halfW,  0,                 0,
       -halfW,  0,                 0,   
@@ -76,7 +76,7 @@ export class MeasurementRulerActor {
        halfW,  0,                 0,   
        halfW,  dynamicTickHeight, 0,
 
-      // --- Nét phụ xếp chồng tạo độ dày đậm theo trục Y ---
+      // --- Supplementary lines stacked along the Y axis for thickness ---
       -halfW + thickness,  dynamicTickHeight, 0,
       -halfW + thickness,  thickness,                 0,
       -halfW,  thickness,                 0,
@@ -88,12 +88,12 @@ export class MeasurementRulerActor {
     this.lineGeometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
     this.lineGeometry.computeBoundingSphere();
 
-    // Định dạng chuỗi hiển thị số
+    // Format display string for the number
     const labelText = niceWorldUnits >= 1 
       ? `${Number(niceWorldUnits.toFixed(2))}` 
       : `${Number(niceWorldUnits.toFixed(5))}`;
 
-    // Tạo lại text sprite nếu chuỗi chữ có sự thay đổi giá trị số
+    // Recreate text sprite only if the text content changes
     if (this._lastLabelText !== labelText) {
       this._lastLabelText = labelText;
 
@@ -107,15 +107,14 @@ export class MeasurementRulerActor {
       this.group.add(this.labelSprite);
     }
 
-    // Gán vị trí anchor node
+    // Assign anchor node position
     this.group.position.copy(this.position);
     
     if (this.labelSprite) {
       const currentZoom = this.camera.zoom || 1;
 
       // ----------------------------------------------------------------
-      // TIẾP TỤC PHÓNG TO KÍCH THƯỚC CHỮ (Màn hình hiển thị)
-      // Tăng từ (0.85 x 0.42) lên (1.1 x 0.55) để chữ to rõ ràng vượt trội
+      // Adjust text sprite scale for clear visibility on screen
       // ----------------------------------------------------------------
       const baseSpriteWidth = 1.1; 
       const baseSpriteHeight = 0.55;
@@ -126,8 +125,10 @@ export class MeasurementRulerActor {
         1
       );
 
-      // Khoảng cách đẩy chữ lên trên cách thước (24 pixel cố định trên màn hình)
-      const desiredLabelPixelOffset = 24; 
+      // ----------------------------------------------------------------
+      // CHANGED: Reduced from 24 to 13 to bring the text closer to the ruler
+      // ----------------------------------------------------------------
+      const desiredLabelPixelOffset = 13; 
       const dynamicLabelY = desiredLabelPixelOffset * unitsPerPixel;
 
       this.labelSprite.position.set(0, dynamicLabelY, 0);
@@ -141,19 +142,19 @@ export class MeasurementRulerActor {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
-    // Canvas kích thước lớn để đảm bảo độ phân giải mật độ điểm ảnh sắc nét
+    // Large canvas size to ensure sharp pixel density resolution
     canvas.width = 256;
     canvas.height = 128;
 
-    // Thiết lập font chữ đậm (bold) và kích thước lớn
+    // Set font style to bold and large size
     ctx.font = `bold ${this.fontSize}px monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
     // ----------------------------------------------------------------
-    // ĐỔ MÀU CHỮ: Tự động chuyển đổi màu của ThreeJS sang mã màu CSS Canvas công thức chuẩn
+    // TEXT COLORING: Convert ThreeJS color format to standard CSS canvas color string
     // ----------------------------------------------------------------
-    let colorStr = "#ffffff"; // Mặc định trắng
+    let colorStr = "#ffffff"; // Default white
     if (typeof this.color === "number") {
       colorStr = `#${this.color.toString(16).padStart(6, "0")}`;
     } else if (typeof this.color === "string") {
@@ -161,7 +162,7 @@ export class MeasurementRulerActor {
     }
     ctx.fillStyle = colorStr;
     
-    // Vẽ chữ vào tâm canvas
+    // Draw text at the center of the canvas
     ctx.fillText(message, canvas.width / 2, canvas.height / 2);
 
     const texture = new THREE.CanvasTexture(canvas);
