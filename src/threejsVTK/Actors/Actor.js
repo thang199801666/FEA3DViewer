@@ -35,7 +35,6 @@ export class Actor extends THREE.Group {
         this._hasVertexColors = false;
 
         // External-surface (body) state.
-        // body chỉ giữ mặt bao ngoài -> nhẹ hơn, feature edge sạch, stencil cap đúng.
         this.externalSurface = true;
         this.keepOuterShell = false;
         this.externalSurfaceWeldTolerance = null;
@@ -52,7 +51,6 @@ export class Actor extends THREE.Group {
             this.mapper = mapper;
         } else {
             this.mapper = null;
-            // a = BufferGeometry (hoặc rỗng); b có thể là opts (object) hoặc name (string), c là name.
             name = (typeof b === "string") ? b : (typeof c === "string" ? c : "Actor");
             opts = (b && typeof b === "object") ? b : ((c && typeof c === "object") ? c : {});
         }
@@ -69,27 +67,23 @@ export class Actor extends THREE.Group {
         this.wireframeUseScalarColors = opts.wireframeUseScalarColors ?? true;
         this._scalarVisible = opts.showScalar ?? true;
 
-        // External-surface options (mặc định BẬT).
+        // External-surface options
         this.externalSurface = opts.externalSurface ?? true;
-        this.keepOuterShell = opts.keepOuterShell ?? false;   // true -> ẩn vách ngăn bên trong (ExternalSurfaceFilter)
+        this.keepOuterShell = opts.keepOuterShell ?? false;
         this.externalSurfaceWeldTolerance = opts.externalSurfaceWeldTolerance ?? null;
-        // Tinh chỉnh riêng cho ExternalSurfaceFilter (chỉ dùng khi keepOuterShell = true).
-        this.externalSurfaceConeAngle = opts.externalSurfaceConeAngle ?? 72; // hạ -> siết vách trong; nâng -> tránh thủng vỏ
-        this.externalSurfaceRayCount = opts.externalSurfaceRayCount ?? 64;   // tăng -> chính xác hơn, chậm hơn
-        this.externalSurfaceDebug = opts.externalSurfaceDebug ?? false;      // bật để in số tam giác trước/sau khi lọc
+        this.externalSurfaceConeAngle = opts.externalSurfaceConeAngle ?? 72;
+        this.externalSurfaceRayCount = opts.externalSurfaceRayCount ?? 64;
+        this.externalSurfaceDebug = opts.externalSurfaceDebug ?? false;
 
         // Initialize Materials
         this.solidColor = new THREE.Color(opts.solidColor ?? 0xcccccc);
 
-        // Remember the "resting" edge appearance so highlight code can restore it cleanly.
         this._baseEdgeColor = new THREE.Color(opts.featureEdgeColor ?? 0x000000);
         this._baseEdgeThickness = opts.featureEdgeThickness ?? 1.0;
 
-        // LineMaterial ("fat lines") hỗ trợ linewidth thật theo pixel,
-        // khác với LineBasicMaterial.linewidth vốn bị WebGL bỏ qua (luôn 1px).
         this._featureEdgeMaterial = new LineMaterial({
             color: opts.featureEdgeColor ?? 0x000000,
-            linewidth: this._baseEdgeThickness, // đơn vị: pixel (worldUnits = false)
+            linewidth: this._baseEdgeThickness,
             worldUnits: false,
             depthTest: true
         });
@@ -99,8 +93,6 @@ export class Actor extends THREE.Group {
         this._wireframeVertexColorMaterial = new THREE.LineBasicMaterial({
             vertexColors: true
         });
-        // Wireframe hiển thị contour khi scalar được cấp qua texture + uv
-        // (LineBasicMaterial hỗ trợ .map từ three.js r138)
         this._wireframeTextureMaterial = new THREE.LineBasicMaterial({
             color: 0xffffff
         });
@@ -117,15 +109,12 @@ export class Actor extends THREE.Group {
             geometry = new THREE.BufferGeometry();
         }
 
-        // BODY = mặt ngoài. Chỉ dispose geometry gốc khi nó do mapper tạo (ta sở hữu);
-        // geometry do người dùng truyền vào (BufferGeometry) thì KHÔNG dispose.
         geometry = this._toExternalSurface(geometry, rawFromMapper);
 
         // Build Surface Mesh
         const colorTexture = (this.mapper && this.mapper.interpolateScalarsBeforeMapping && geometry.getAttribute("uv") && this.mapper.getColorTexture)
             ? this.mapper.getColorTexture() : null;
 
-        // Lit material: used when displaying solid color (affected by lights)
         this._surfaceLitMaterial = new THREE.MeshStandardMaterial({
             vertexColors: !colorTexture && !!geometry.getAttribute("color"),
             map: colorTexture,
@@ -138,7 +127,6 @@ export class Actor extends THREE.Group {
             opacity: opts.opacity ?? 1
         });
 
-        // Unlit material: used when scalar visibility is ON (ignores all lighting)
         this._surfaceUnlitMaterial = new THREE.MeshBasicMaterial({
             vertexColors: !colorTexture && !!geometry.getAttribute("color"),
             map: colorTexture,
@@ -152,15 +140,12 @@ export class Actor extends THREE.Group {
         this.surface.name = `${this.name}__surface`;
         this.add(this.surface);
 
-        // Analyze initial scalar parameters
         this._scalarTexture = colorTexture;
         this._hasVertexColors = !!geometry.getAttribute("color");
         this._applyScalarVisibility();
 
-        // Build Boundary Edge Line Segments
         this._buildBoundaryEdges();
 
-        // Apply display modes
         if (opts.displayMode) {
             this.setDisplayMode(opts.displayMode);
         } else {
@@ -172,16 +157,6 @@ export class Actor extends THREE.Group {
     // External Surface (body) extraction
     // ------------------------------------------------------------------
 
-    /**
-     * Chuyển geometry đầy đủ -> chỉ mặt ngoài (ẩn vách ngăn / vỏ con bên trong).
-     * Trả về geometry mới đã nén; nếu externalSurface = false thì trả nguyên bản.
-     * disposeRaw = true: giải phóng geometry gốc (chỉ khi ta sở hữu nó, vd mapper tạo).
-     *
-     * - keepOuterShell = true  -> ExternalSurfaceFilter (occlusion): ẩn HẲN mọi vách
-     *   ngăn / gân / gusset bên trong, chỉ chừa vỏ ngoài cùng -> cắt ra tiết diện đặc.
-     * - keepOuterShell = false -> GeometryFilter: chỉ gộp các mặt trùng khít giữa
-     *   các khối (giữ lại bề mặt khoang rỗng thật, nhẹ và nhanh).
-     */
     _toExternalSurface(geometry, disposeRaw = false) {
         if (!this.externalSurface || !geometry) {
             return geometry;
@@ -191,7 +166,6 @@ export class Actor extends THREE.Group {
         let ext;
 
         if (this.keepOuterShell) {
-            // Vỏ ngoài cùng thật sự: ẩn vách ngăn bên trong bằng occlusion ray test.
             ext = new ExternalSurfaceFilter()
                 .setWeldTolerance(tol)
                 .setEscapeConeAngle(this.externalSurfaceConeAngle ?? 72)
@@ -208,7 +182,6 @@ export class Actor extends THREE.Group {
                     + `(bỏ ${triIn - triOut}). keepOuterShell=${this.keepOuterShell}`);
             }
         } else {
-            // Đường nhẹ: chỉ loại mặt trùng khít giữa các khối (chuẩn VTK vtkGeometryFilter).
             ext = new GeometryFilter()
                 .setRemoveInternalWalls(true)
                 .setWeldTolerance(tol)
@@ -216,7 +189,6 @@ export class Actor extends THREE.Group {
                 .getOutputData();
         }
 
-        // Giải phóng bộ nhớ của geometry thô trung gian nếu do mapper sinh ra
         if (ext !== geometry && disposeRaw) {
             geometry.dispose();
         }
@@ -224,7 +196,6 @@ export class Actor extends THREE.Group {
         return ext;
     }
 
-    /** Bật/tắt chế độ mặt ngoài rồi dựng lại body + edge (cần có mapper để build lại). */
     setExternalSurface(enabled, { keepOuterShell } = {}) {
         this.externalSurface = !!enabled;
         if (keepOuterShell !== undefined) this.keepOuterShell = !!keepOuterShell;
@@ -250,14 +221,10 @@ export class Actor extends THREE.Group {
         return this.setScalarVisibility(!this._scalarVisible);
     }
 
-    /**
-     * True ONLY when a scalar contour / color-map is really being drawn on the surface.
-     */
     hasActiveScalarColoring() {
         return this._scalarVisible && (!!this._scalarTexture || this._hasVertexColors);
     }
 
-    /** Applies the current scalar contour state to surface materials and wireframe overlays. */
     _applyScalarVisibility() {
         if (!this.surface) return this;
 
@@ -274,7 +241,6 @@ export class Actor extends THREE.Group {
             mat.map = null;
             mat.vertexColors = false;
             mat.color.copy(this.solidColor);
-
             mat.emissive.copy(this.solidColor).multiplyScalar(0.3);
 
             if (this.surface.userData.initialRoughness === undefined) {
@@ -343,6 +309,7 @@ export class Actor extends THREE.Group {
         const useVertexColor = wantScalar && !useTexture && !!srcGeom.getAttribute("color");
 
         let wireGeom, material;
+
         if (useTexture) {
             wireGeom = this._buildScalarWireframeGeometry(srcGeom, { uv: true });
             material = this._wireframeTextureMaterial;
@@ -354,7 +321,7 @@ export class Actor extends THREE.Group {
             wireGeom = this._buildScalarWireframeGeometry(srcGeom, { color: true });
             material = this._wireframeVertexColorMaterial;
         } else {
-            wireGeom = new THREE.WireframeGeometry(srcGeom);
+            wireGeom = this._buildScalarWireframeGeometry(srcGeom, {});
             material = this._wireframeFlatMaterial;
         }
 
@@ -409,43 +376,176 @@ export class Actor extends THREE.Group {
     getDisplayMode() { return this.displayMode; }
 
     // ------------------------------------------------------------------
-    // Wireframe Structural Builder
+    // Wireframe Structural Builder (TOPOLOGY TRACING & CELL COORDINATES)
     // ------------------------------------------------------------------
 
     _buildScalarWireframeGeometry(src, opts = {}) {
+        const polyData = this.getPolyData();
+        
+        // PHƯƠNG ÁN CHUẨN FEA: Nếu có dữ liệu ô (Cells) nguyên bản từ file VTK
+        if (polyData && polyData.cells && polyData.cells.length > 0) {
+            const positions = [];
+            const colors = opts.color ? [] : null;
+            const uvs = opts.uv ? [] : null;
+
+            // Truy xuất trực tiếp từ các thuộc tính gốc của PolyData đầu vào mapper
+            // Điều này đảm bảo tọa độ (X, Y, Z) và chỉ mục đỉnh khớp hoàn toàn với cấu trúc Cell
+            const rawPoints = polyData.points; // Mảng phẳng [x0, y0, z0, x1, y1, z1, ...]
+            const rawColors = opts.color && polyData.pointData ? polyData.pointData.scalars : null;
+            const rawUvs = opts.uv && polyData.pointData ? polyData.pointData.tcoords : null;
+
+            const uniqueEdges = new Set();
+
+            const addEdgeRaw = (i, j) => {
+                if (i === undefined || j === undefined) return;
+                const key = i < j ? `${i}_${j}` : `${j}_${i}`;
+                if (uniqueEdges.has(key)) return; // Tối ưu: Gộp các cạnh trùng nhau giữa các khối kề sát
+                uniqueEdges.add(key);
+
+                // Điểm i
+                positions.push(rawPoints[i * 3], rawPoints[i * 3 + 1], rawPoints[i * 3 + 2]);
+                // Điểm j
+                positions.push(rawPoints[j * 3], rawPoints[j * 3 + 1], rawPoints[j * 3 + 2]);
+
+                if (colors && rawColors) {
+                    // Hỗ trợ cả cấu trúc mảng RGB phẳng hoặc mảng giá trị đơn
+                    const cDim = rawColors.length / (rawPoints.length / 3);
+                    if (cDim >= 3) {
+                        colors.push(rawColors[i * cDim], rawColors[i * cDim + 1], rawColors[i * cDim + 2]);
+                        colors.push(rawColors[j * cDim], rawColors[j * cDim + 1], rawColors[j * cDim + 2]);
+                    } else {
+                        // Ánh xạ màu giả lập hoặc contour (nếu cần xử lý sâu hơn thông qua Mapper)
+                        colors.push(rawColors[i], rawColors[i], rawColors[i]);
+                        colors.push(rawColors[j], rawColors[j], rawColors[j]);
+                    }
+                }
+                if (uvs && rawUvs) {
+                    uvs.push(rawUvs[i * 2], rawUvs[i * 2 + 1]);
+                    uvs.push(rawUvs[j * 2], rawUvs[j * 2 + 1]);
+                }
+            };
+
+            // Duyệt qua từng ô phần tử hữu hạn nguyên bản
+            for (let c = 0; c < polyData.cells.length; c++) {
+                const cell = polyData.cells[c];
+                if (!cell || cell.length < 2) continue;
+
+                if (cell.length === 8) { 
+                    // KHỐI HEXAHEDRON (8 ĐỈNH) - Vẽ đúng 12 cạnh biên của khối hộp, SẠCH ĐƯỜNG CHÉO
+                    // 4 cạnh đáy mặt dưới (v0-v1-v2-v3)
+                    addEdgeRaw(cell[0], cell[1]); addEdgeRaw(cell[1], cell[2]);
+                    addEdgeRaw(cell[2], cell[3]); addEdgeRaw(cell[3], cell[0]);
+                    
+                    // 4 cạnh đáy mặt trên (v4-v5-v6-v7)
+                    addEdgeRaw(cell[4], cell[5]); addEdgeRaw(cell[5], cell[6]);
+                    addEdgeRaw(cell[6], cell[7]); addEdgeRaw(cell[7], cell[4]);
+                    
+                    // 4 cạnh đứng liên kết dọc theo chiều cao
+                    addEdgeRaw(cell[0], cell[4]); addEdgeRaw(cell[1], cell[5]);
+                    addEdgeRaw(cell[2], cell[6]); addEdgeRaw(cell[3], cell[7]);
+
+                } else if (cell.length === 4) {
+                    // PHẦN TỬ QUẤT/TẤM QUAD (4 ĐỈNH)
+                    addEdgeRaw(cell[0], cell[1]); addEdgeRaw(cell[1], cell[2]);
+                    addEdgeRaw(cell[2], cell[3]); addEdgeRaw(cell[3], cell[0]);
+                } else if (cell.length === 3) {
+                    // PHẦN TỬ TAM GIÁC (TRIANGLE)
+                    addEdgeRaw(cell[0], cell[1]); addEdgeRaw(cell[1], cell[2]);
+                    addEdgeRaw(cell[2], cell[0]);
+                } else {
+                    // Các phần tử dạng thanh (Line) hoặc đa diện đặc thù khác (Polygon)
+                    for (let i = 0; i < cell.length; i++) {
+                        addEdgeRaw(cell[i], cell[(i + 1) % cell.length]);
+                    }
+                }
+            }
+
+            const g = new THREE.BufferGeometry();
+            g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+            if (colors && colors.length > 0) g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+            if (uvs && uvs.length > 0) g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+            return g;
+        }
+
+        // ------------------------------------------------------------------
+        // FALLBACK TRONG SUỐT: Dùng giải thuật hình học tính góc nếu không chạy qua Mapper
+        // ------------------------------------------------------------------
+        if (!src.getAttribute("normal")) {
+            src.computeVertexNormals();
+        }
+
         const pos = src.getAttribute("position");
         const col = opts.color ? src.getAttribute("color") : null;
         const uv = opts.uv ? src.getAttribute("uv") : null;
         const index = src.getIndex();
         const count = index ? index.count : pos.count;
 
+        const edgeMap = {};
+        const triangles = [];
+        const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+        const cb = new THREE.Vector3(), ab = new THREE.Vector3();
+
+        for (let t = 0, triIdx = 0; t < count; t += 3, triIdx++) {
+            const a = index ? index.getX(t)     : t;
+            const b = index ? index.getX(t + 1) : t + 1;
+            const c = index ? index.getX(t + 2) : t + 2;
+
+            vA.fromBufferAttribute(pos, a); vB.fromBufferAttribute(pos, b); vC.fromBufferAttribute(pos, c);
+            cb.subVectors(vC, vB).cross(ab.subVectors(vA, vB)).normalize();
+
+            triangles.push({ indices: [a, b, c], normal: cb.clone() });
+
+            const keys = [
+                a < b ? `${a}_${b}` : `${b}_${a}`,
+                b < c ? `${b}_${c}` : `${c}_${b}`,
+                c < a ? `${c}_${a}` : `${a}_${c}`
+            ];
+            keys.forEach(key => {
+                if (!edgeMap[key]) edgeMap[key] = [];
+                edgeMap[key].push(triIdx);
+            });
+        }
+
         const positions = [];
         const colors = col ? [] : null;
         const uvs = uv ? [] : null;
-        const seen = index ? new Set() : null;
 
         const pushVertex = (i) => {
             positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
             if (colors) colors.push(col.getX(i), col.getY(i), col.getZ(i));
             if (uvs) uvs.push(uv.getX(i), uv.getY(i));
         };
-        const addEdge = (i, j) => {
-            if (seen) {
-                const key = i < j ? `${i}_${j}` : `${j}_${i}`;
-                if (seen.has(key)) return;
-                seen.add(key);
-            }
-            pushVertex(i);
-            pushVertex(j);
-        };
 
-        for (let t = 0; t < count; t += 3) {
-            const a = index ? index.getX(t)     : t;
-            const b = index ? index.getX(t + 1) : t + 1;
-            const c = index ? index.getX(t + 2) : t + 2;
-            addEdge(a, b);
-            addEdge(b, c);
-            addEdge(c, a);
+        const pA = new THREE.Vector3(), pB = new THREE.Vector3(), pC = new THREE.Vector3(), pD = new THREE.Vector3();
+        const nPlane = new THREE.Vector3(), mLine = new THREE.Vector3();
+        const thresholdCos = Math.cos(THREE.MathUtils.degToRad(5));
+
+        for (const key in edgeMap) {
+            const triIds = edgeMap[key];
+            const [v1Str, v2Str] = key.split("_");
+            const v1 = parseInt(v1Str, 10); const v2 = parseInt(v2Str, 10);
+
+            if (triIds.length === 1) {
+                pushVertex(v1); pushVertex(v2);
+            } else if (triIds.length === 2) {
+                const tri1 = triangles[triIds[0]];
+                const tri2 = triangles[triIds[1]];
+                if (tri1.normal.dot(tri2.normal) > thresholdCos) {
+                    const cIdx = tri1.indices.find(idx => idx !== v1 && idx !== v2);
+                    const dIdx = tri2.indices.find(idx => idx !== v1 && idx !== v2);
+                    pA.fromBufferAttribute(pos, v1); pB.fromBufferAttribute(pos, v2);
+                    pC.fromBufferAttribute(pos, cIdx); pD.fromBufferAttribute(pos, dIdx);
+
+                    mLine.subVectors(pD, pC).cross(nPlane.copy(tri1.normal)).normalize();
+                    if (pA.clone().sub(pC).dot(mLine) * pB.clone().sub(pC).dot(mLine) >= 0) {
+                        pushVertex(v1); pushVertex(v2);
+                    }
+                } else {
+                    pushVertex(v1); pushVertex(v2);
+                }
+            } else {
+                pushVertex(v1); pushVertex(v2);
+            }
         }
 
         const g = new THREE.BufferGeometry();
@@ -536,7 +636,6 @@ export class Actor extends THREE.Group {
         if (!this.mapper) return this;
         const oldGeom = this.surface.geometry;
 
-        // XỬ LÝ CHÍNH SÁC TẠI ĐÂY: Build geometry mới từ mapper -> lọc bỏ vách trong -> gán lại cho surface
         this.surface.geometry = this._toExternalSurface(this.mapper.buildGeometry(), true);
         if (oldGeom) oldGeom.dispose();
 
