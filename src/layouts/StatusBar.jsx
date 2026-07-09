@@ -54,6 +54,7 @@ export default function StatusBar({
                     >
                         <option value="modelWithEdges">Model + Edges</option>
                         <option value="modelWithoutEdges">Model</option>
+                        <option value="mesh">Mesh</option>
                         <option value="wireframe">Wireframe</option>
                         <option value="boundaryEdges">Boundary Edges</option>
                     </select>

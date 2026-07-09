@@ -5,7 +5,7 @@ import Sidebar from "./Sidebar";
 import StatusBar from "./StatusBar";
 import SettingsDialog from "./SettingsDialog";
 import * as THREE from "three";
-import { NAV_STYLE } from "../threejsVTK/Interaction/InputStyleHandler";
+import { NAV_STYLE } from "../threejsVTK";
 import { createDefaultSettings } from "./settingsConfig";
 
 // Normalize a navigation style value into a NAV_STYLE enum member.

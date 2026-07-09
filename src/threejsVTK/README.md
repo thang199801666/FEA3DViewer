@@ -1,149 +1,161 @@
-# threejsVTK --- Optimized Structure & High-Performance Numerical Result Visualization
+# threejsVTK
 
-The **threejsVTK** library is specifically designed to serve as a
-high-performance post-processing core engine for **Finite Element
-Analysis (FEA)** and **Computational Fluid Dynamics (CFD)** simulation
-data on top of the **WebGL / Three.js** platform.
+Pipeline visualization kiểu VTK trên three.js. Gói này là bản **đã tái cấu trúc**
+(Phase 0 + Phase 1) của thư viện gốc: 61 file, 0 import gãy, 33 test xanh,
+0 vi phạm chiều phụ thuộc.
 
-## 1. System Directory Structure
-
-``` text
-threejsVTK/
-├── index.js
-├── Core/
-│   ├── DataObject.js
-│   ├── DataSet.js
-│   ├── FieldData.js
-│   ├── CellTypes.js
-│   ├── PolyData.js
-│   └── UnstructuredGrid.js
-├── Sources/
-│   ├── Source.js
-│   └── BoxSource.js, CubeSource.js, SphereSource.js
-├── Filters/
-│   ├── Filter.js
-│   ├── ClipFilter.js
-│   ├── SmoothFilter.js
-│   ├── FeatureEdges.js
-│   ├── ContourFilter.js
-│   ├── WarpFilter.js
-│   └── DataSetSurfaceFilter.js
-├── Mappers/
-│   ├── PolyDataMapper.js
-│   ├── LookupTable.js
-│   └── DataSetMapper.js
-├── Actors/
-│   ├── Actor.js
-│   ├── ScalarBarActor.js
-│   ├── VectorGlyphActor.js
-│   └── OrientationTriadActor.js
-├── Rendering/
-│   ├── Renderer.js
-│   ├── RenderWindow.js
-│   ├── ColorTransferFunction.js
-│   └── ContourShaderMaterial.js
-├── Interaction/
-│   └── RenderWindowInteractor.js
-├── IO/
-│   └── VTKReader.js
-└── Shaders/
-    ├── ContourVertex.glsl
-    └── ContourFragment.glsl
+```bash
+npm install
+npm run check      # verify-imports + tests + dependency-cruiser
 ```
 
-## 2. Typical Pipeline Usage
+---
 
-### Standard FEA Pipeline
+## ⚠ Hai file bạn PHẢI tự điền vào
 
-``` javascript
-import {
-  VTKReader, WarpFilter, DataSetSurfaceFilter,
-  DataSetMapper, Actor,
-  ColorTransferFunction, ScalarBarActor,
-} from "threejsVTK";
+Gói này **không chạy được ngay** cho tới khi bạn thay hai placeholder. Tôi cố tình
+không viết chúng: cả hai đều thiếu trong bản source được cung cấp, và bịa ra
+implementation sẽ cho bạn code trông đúng mà sai contract.
 
-const grid = new VTKReader().parse(vtkText);
+| File | Tình trạng | Cách khôi phục |
+|---|---|---|
+| `src/interaction/picking/ActorTopology.js` | Gốc **0 byte** | `git log --all --diff-filter=D -- '**/ActorTopology.js'` |
+| `src/camera/Camera.js` | Gốc là `Rendering/Camera.js`, không có trong bản copy | Chép đè file thật của bạn |
 
-const warped = new WarpFilter()
-  .setInputData(grid)
-  .setVectorArrayName("Displacement")
-  .setScaleFactor(20)
-  .getOutputData();
+Cả hai placeholder đều **ném lỗi rõ ràng** khi bị dùng, và chú thích đầu file liệt kê
+đầy đủ interface được **trích ra từ call site thật** (24 thành viên cho `ActorTopology`,
+7 cho `Camera`) — không phải phỏng đoán.
 
-const surface = new DataSetSurfaceFilter()
-  .setInputData(warped)
-  .getOutputData();
+Chừng nào `ActorTopology` chưa có, sub-entity picking (`PickMode.CELL/SURFACE/NODE`)
+không hoạt động. Điều này **đã đúng với repo hiện tại của bạn** — file 0 byte nghĩa là
+tính năng đó đang chết, chỉ là chưa ai nhận ra vì `import` một file rỗng không báo lỗi.
 
-const ctf = new ColorTransferFunction({
-  preset: "coolToWarm"
-}).setDiscrete(12);
+---
 
-const mapper = new DataSetMapper()
-  .setInputData(surface)
-  .setColorBy("VonMises", 0)
-  .setLookupTable(ctf);
+## Cấu trúc
 
-renderer.addActor(new Actor(mapper));
-renderer.addActor(new ScalarBarActor({
-  lookupTable: ctf,
-  title: "von Mises"
-}));
+```
+src/
+├─ core/           DataObject DataSet PolyData UnstructuredGrid FieldData CellTypes conversion
+├─ geometry/       weld surfaceTopology surfaceVisibility featureEdges     ← thuần BufferGeometry
+├─ filters/        Filter SurfaceFilter DataSetSurfaceFilter ContourFilter
+│                  ClipFilter ClipClosedSurfaceFilter CutterFilter SmoothFilter WarpFilter
+├─ color/          LookupTable ColorTransferFunction presets
+├─ mappers/        PolyDataMapper DataSetMapper
+├─ camera/         Camera* CameraState CameraMath CameraAnimation CameraClipping
+├─ rendering/      RenderWindow Renderer materials/{ContourShaderMaterial,HatchMaterial}
+├─ actors/         Actor LineActor SectionActor VectorGlyphActor
+├─ widgets/        ScalarBarActor OrientationTriadActor NavigationCube MeasurementRuler
+├─ interaction/    RenderWindowInteractor InteractorStyle{,Orbit,CAD,TrackballCamera}
+│                  InputStyleHandler constants
+│   ├─ picking/    PickMode Picker SubPicker ActorTopology* PickingController
+│   └─ highlight/  ActorHighlighter SelectionHighlighter
+└─ index.js        API công khai duy nhất
+```
+`*` = placeholder
+
+### Bất biến kiến trúc
+
+```
+core → geometry → filters → color → mappers → camera → rendering → actors → widgets → interaction
 ```
 
-### CPU Isolines
+Import chỉ đi từ trái sang phải. `.dependency-cruiser.cjs` enforce, `npm run depcruise`.
 
-``` javascript
-const iso = new ContourFilter()
-  .setInputData(surface)
-  .generateValues(10, surface.pointData.getScalars().getRange(0))
-  .getOutputData();
+> Thứ tự này **khác** với đề xuất trong bản audit đầu tiên. Khi chạy thật, `Renderer`
+> import `Camera` và `SectionActor` import `rendering/materials` — nên `camera` phải
+> đứng trước `rendering`, và `rendering` trước `actors`. Bản audit đoán sai; công cụ
+> sửa lại.
+
+---
+
+## Ba bug thật đã vá
+
+### 1. Vách trong không bị loại khi toạ độ lệch vài ulp
+
+`GeometryFilter` và `ExternalSurfaceFilter` hàn đỉnh bằng `Math.round(x/tol)*tol`.
+Hai đỉnh cách nhau `1e-6` (với `tol = 1e-3`) vẫn rơi vào hai bucket khác nhau nếu nằm
+hai bên ranh giới `.5`. Mặt chung của hai phần tử không được nhận là trùng →
+vách trong nằm lại → clipping/section hiện tiết diện rỗng có gân.
+
+```
+$ node tests/regression_old_vs_new.mjs
+
+  case                                    GeometryFilter(cũ)    extractByTopology(mới)
+  mặt chung trùng khít       (d=0)        6  ok                 6  ok
+  mặt chung lệch 1e-6        (d=1e-6)     8  SAI               6  ok
+  mặt chung lệch 1e-5        (d=1e-5)     8  SAI               6  ok
 ```
 
-### GPU Vector Glyphs
+`8` = cả hai bản của mặt chung được giữ. Đây là sai số bình thường khi ghép hai part
+đã transform. Chạy file này trước tiên nếu bạn từng thấy tiết diện lạ sau khi cắt.
 
-``` javascript
-const glyphs = new VectorGlyphActor(surface,{
-  vectorArrayName:"Displacement",
-  scaleFactor:1.5,
-  maskRatio:4
-});
+`externalSurfaceGeometry.js` và `FeatureEdges._weld()` vốn đã dùng thuật toán đúng
+(spatial hash 27 ô). Bản gộp giữ thuật toán đó — nay chỉ còn **một** bản trong
+`geometry/weld.js` thay vì bốn.
 
-renderer.addActor(glyphs);
+### 2. Filter đánh rơi pointData / cellData
+
+`SurfaceFilter` giữ nguyên `pointData` (point id không đổi khi chỉ lọc index) và
+**remap** `cellData` qua `geometry.userData.cellMap` — đúng convention `Picker.js` đang đọc.
+
+### 3. `ColorTransferFunction` im lặng nuốt preset sai
+
+`COLORMAP_PRESETS[preset] ?? null` → gõ `"viridus"` cho ra rainbow, không báo gì.
+Nay ném lỗi kèm danh sách preset hợp lệ.
+
+---
+
+## Đã gộp / xoá
+
+| Xoá | Thay bằng |
+|---|---|
+| `Filters/GeometryFilter.js` | `geometry/surfaceTopology.js` |
+| `Filters/externalSurfaceGeometry.js` | `geometry/surfaceTopology.js` |
+| `Filters/ExternalSurfaceFilter.js` | `geometry/surfaceVisibility.js` |
+| `Filters/earcut.js` (1018 dòng) | `npm i earcut` |
+| `Rendering/VTKCamera.js` | hợp nhất vào `camera/Camera.js` |
+| `Camera/Camera.js`, `Picking/index.js` | shim/barrel, không còn cần |
+
+Ba lớp trích mặt ngoài + một hàm → một `SurfaceFilter` với hai strategy:
+
+```js
+import { SurfaceFilter, SURFACE_STRATEGY } from "threejs-vtk";
+
+const surf = new SurfaceFilter({ strategy: SURFACE_STRATEGY.TOPOLOGY });   // nhanh, runtime
+const shell = new SurfaceFilter({ strategy: SURFACE_STRATEGY.VISIBILITY }); // chậm, offline
+mapper.setInputData(surf.setInputData(grid).getOutputData());
 ```
 
-### GPU Contours
+`Actor` vẫn dùng API thấp hơn (`extractByTopology` / `extractByVisibility` nhận
+`BufferGeometry`), vì nó làm việc trực tiếp trên geometry chứ không qua PolyData.
+`Actor.keepOuterShell = true` chọn strategy **visibility** — trùng tên nhưng khác nghĩa
+với cờ `keepOuterShell` của `extractByTopology`.
 
-``` javascript
-const { material, attachScalar, setNumBands } =
-  makeContourMaterial(ctf,{
-    numBands:12,
-    range,
-    showIsolines:true
-  });
+---
 
-attachScalar(geometry, scalars, range);
+## Còn lại (Phase 2)
 
-slider.oninput = e => setNumBands(+e.target.value);
-```
+Chặn bởi hai file thiếu ở trên:
 
-## 3. Coding Style & Conventions
+- Gộp `InteractorStyleOrbit` (756) + `InteractorStyleCAD` (497) → `InteractorStyleNavigation`
+  (cần API của `Camera` facade). ~500 dòng trùng lặp.
+- `SubPicker` compose `Picker` thay vì viết lại raycast (cần `ActorTopology`).
+- Tách `Actor.js` (680 dòng, 6 trách nhiệm) → `Actor` + `ActorAppearance` + `ActorEdges` + `ActorDisplayMode`.
+- Base `Highlighter` cho `ActorHighlighter` + `SelectionHighlighter`.
+- `VTPReader` / `VTKLegacyReader` dùng `io/dataArrayCodec.js` (file đã có, đã test, chưa nối vào).
 
--   Loose Coupling Pipeline Architecture
--   DataSet inherits from `DataObject`
--   `PolyData` and `UnstructuredGrid` inherit from `DataSet`
--   All processing algorithms inherit from `Filter`
--   Modification Time (MTime) for cache invalidation
--   Fluent API (`return this`)
--   Explicit separation of `PointData`, `CellData`, and `FieldData`
+---
 
-### Data Types
+## Công cụ
 
-  Type        Purpose
-  ----------- -------------------------------------------------
-  PointData   Nodal results (displacement, temperature, etc.)
-  CellData    Element results (stress, material ID, etc.)
-  FieldData   Global metadata (title, timestep, units, etc.)
+| Lệnh | Việc |
+|---|---|
+| `npm run verify` | mọi import trỏ tới file thật, mọi symbol có export (kể cả barrel) |
+| `npm test` | 33 test, 5 suite |
+| `npm run depcruise` | chiều phụ thuộc + circular |
+| `node tools/migrate.mjs --root <repo>` | codemod áp layout mới lên repo gốc (dry-run mặc định) |
 
-## License
-
-MIT License.
+Trước khi làm gì: thêm `.gitattributes`, chạy `git add --renormalize .` trong một
+**commit riêng**. Repo gốc trộn CRLF và LF (`Actor.js` CRLF, `PolyData.js` LF); nếu không
+normalize trước, mọi diff refactor sẽ bị nhiễu toàn bộ file.

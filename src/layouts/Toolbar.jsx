@@ -3,6 +3,7 @@ import * as THREE from "three";
 import "./Toolbar.css"; 
 import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK";
 import SectionDialog from "./SectionDialog"; 
+import Icon from "../components/Icon";
 
 const CLIP_AXES = [
     { key: "x", label: "X", index: 0, color: 0xff5252 },
@@ -157,6 +158,9 @@ export default function Toolbar({
                     const posVec = center.clone();
                     posVec.setComponent(ax.index, s.pos);
                     helpers[ax.key].position.copy(posVec);
+                    
+                    // Cập nhật trạng thái ẩn/hiện của helper dựa trên showPlane (mặc định hiển thị nếu undefined)
+                    helpers[ax.key].visible = s.showPlane ?? true;
                 }
 
             } else if (helpers[ax.key]) {
@@ -218,9 +222,9 @@ export default function Toolbar({
             }
         }
         setClip({
-            x: { on: false, pos: 0, flip: false },
-            y: { on: false, pos: 0, flip: false },
-            z: { on: false, pos: 0, flip: false },
+            x: { on: false, pos: 0, flip: false, showPlane: true },
+            y: { on: false, pos: 0, flip: false, showPlane: true },
+            z: { on: false, pos: 0, flip: false, showPlane: true },
         });
     };
 
@@ -364,12 +368,12 @@ export default function Toolbar({
                     <>
                         <div className="ribbon-group">
                             <div className="ribbon-group-content">
-                                <button className="ribbon-btn" onClick={handleOpenClick} title="Open VTK file from computer">
-                                    <span className="ribbon-icon">📂</span>
-                                    <span className="ribbon-label">Open</span>
-                                </button>
-                                <button className="ribbon-btn" onClick={handleResetView} title="Reset to default orientation view">
-                                    <span className="ribbon-icon">🏠</span>
+                                <button className="ribbon-btn" onClick={handleOpenClick}>
+                                        <Icon name="folder-open" size={24} className="ribbon-icon" />
+                                        <span className="ribbon-label">Open</span>
+                                    </button>
+                                <button className="ribbon-btn" onClick={handleResetView}>
+                                    <Icon name="fitcontent" size={24} className="ribbon-icon" />
                                     <span className="ribbon-label">Reset</span>
                                 </button>
                             </div>
@@ -378,7 +382,7 @@ export default function Toolbar({
                         <div className="ribbon-group">
                             <div className="ribbon-group-content">
                                 <button className="ribbon-btn" onClick={onOpenSettings} title="System configuration">
-                                    <span className="ribbon-icon">⚙️</span>
+                                    <Icon name="setting" size={24} className="ribbon-icon" />
                                     <span className="ribbon-label">Settings</span>
                                 </button>
                             </div>
@@ -392,7 +396,7 @@ export default function Toolbar({
                         <div className="ribbon-group">
                             <div className="ribbon-group-content">
                                 <button className="ribbon-btn" onClick={handleClearScene} title="Clear all objects in the scene">
-                                    <span className="ribbon-icon">🗑️</span>
+                                    <Icon name="clearBrush" size={24} className="ribbon-icon" />
                                     <span className="ribbon-label">Clear All</span>
                                 </button>
                             </div>
@@ -405,7 +409,7 @@ export default function Toolbar({
                                     onClick={openClipDialog}
                                     title="Cut model using X/Y/Z planes and shift via sliders"
                                 >
-                                    <span className="ribbon-icon">✂️</span>
+                                    <Icon name="section" size={24} className="ribbon-icon" />
                                     <span className="ribbon-label">Section</span>
                                 </button>
                             </div>
@@ -418,7 +422,7 @@ export default function Toolbar({
                     <div className="ribbon-group">
                         <div className="ribbon-group-content">
                             <button className="ribbon-btn" onClick={handleOpenBoxDialog} title="Add a primitive Box shape">
-                                <span className="ribbon-icon">📦</span>
+                                <Icon name="box" size={24} className="ribbon-icon" />
                                 <span className="ribbon-label">Box</span>
                             </button>
                         </div>
@@ -442,7 +446,7 @@ export default function Toolbar({
                                 <div className="ribbon-separator"></div>
 
                                 <button className="ribbon-btn" onClick={handleFitView} title="Zoom to fit window screen">
-                                    <span className="ribbon-icon">🔍</span>
+                                    <Icon name="fitcontent" size={24} className="ribbon-icon" />
                                     <span className="ribbon-label">Fit</span>
                                 </button>
                             </div>
