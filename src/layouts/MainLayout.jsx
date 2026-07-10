@@ -9,9 +9,6 @@ import { NAV_STYLE } from "../threejsVTK";
 import { createDefaultSettings } from "./settingsConfig";
 
 // Normalize a navigation style value into a NAV_STYLE enum member.
-//   - If it is already a valid NAV_STYLE value, use it as-is.
-//   - If it is a display string ("Blender") -> map by its upper-cased key.
-//   - Otherwise fall back to BLENDER.
 const resolveNavStyle = (s) => {
     if (!s) return NAV_STYLE.BLENDER;
     if (Object.values(NAV_STYLE).includes(s)) return s;
@@ -31,6 +28,9 @@ export default function MainLayout() {
     const [isHoveredSplitter, setIsHoveredSplitter] = useState(false);
 
     const [sceneVersion, setSceneVersion] = useState(0);
+
+    // --- State cho Custom Context Menu trên Scene ---
+    const [contextMenu, setContextMenu] = useState({ isOpen: false, x: 0, y: 0 });
 
     const workspaceRef = useRef(null);
     const sidebarRef = useRef(null);
@@ -56,8 +56,6 @@ export default function MainLayout() {
     }, []);
 
     // Apply the active display mode to every actor whenever it changes.
-    // Centralized here so it runs no matter where the change came from
-    // (StatusBar dropdown or the Settings dialog).
     useEffect(() => {
         const scene = sceneController1?.scene || sceneController2?.scene || sharedSceneRef.current;
         if (scene) {
@@ -72,8 +70,6 @@ export default function MainLayout() {
     }, [settings.displayMode, sceneController1, sceneController2]);
 
     // One-shot camera sync when linking is enabled and both viewports are ready.
-    // Forces viewport 2 (secondary) to match viewport 1 (primary) immediately,
-    // without waiting for a mouse interaction.
     useEffect(() => {
         if (!settings.isViewLinked || !settings.isSplit) return;
         if (!sceneController1 || !sceneController2) return;
@@ -121,6 +117,44 @@ export default function MainLayout() {
         };
     }, [isDragging, resize, stopResizing]);
 
+    // --- Xử lý Context Menu tùy chỉnh trên Main Scene ---
+    const handleSceneContextMenu = useCallback((e) => {
+        e.preventDefault(); // Tắt chuột phải mặc định
+        setContextMenu({
+            isOpen: true,
+            x: e.clientX,
+            y: e.clientY
+        });
+    }, []);
+
+    // Tắt chuột phải trên Sidebar (Model Tree)
+    const handleSidebarContextMenu = useCallback((e) => {
+        e.preventDefault();
+    }, []);
+
+    // --- Đóng context menu & Chặn Ctrl+S ---
+    useEffect(() => {
+        const closeMenu = () => {
+            if (contextMenu.isOpen) setContextMenu((prev) => ({ ...prev, isOpen: false }));
+        };
+
+        const handleKeyDown = (e) => {
+            // Kiểm tra phím tắt Ctrl+S (Windows/Linux) hoặc Cmd+S (macOS)
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+                e.preventDefault();
+                console.log("Ctrl+S shortcut disabled.");
+            }
+        };
+
+        window.addEventListener("click", closeMenu);
+        window.addEventListener("keydown", handleKeyDown);
+
+        return () => {
+            window.removeEventListener("click", closeMenu);
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [contextMenu.isOpen]);
+
     return (
         <div
             ref={workspaceRef}
@@ -167,9 +201,10 @@ export default function MainLayout() {
                     backgroundColor: isDark ? "#181818" : "#f0f0f0",
                 }}
             >
-                {/* SIDEBAR */}
+                {/* SIDEBAR - Đã chặn chuột phải */}
                 <aside
                     ref={sidebarRef}
+                    onContextMenu={handleSidebarContextMenu}
                     style={{
                         width: `${currentWidthRef.current}px`,
                         height: "100%",
@@ -243,8 +278,10 @@ export default function MainLayout() {
                     </div>
                 </div>
 
+                {/* MAIN SCENE CONTAINER - Đã kích hoạt Custom Context Menu & Chặn chuột phải gốc */}
                 <main
                     ref={sceneContainerRef}
+                    onContextMenu={handleSceneContextMenu}
                     style={{
                         width: `calc(100% - ${currentWidthRef.current}px)`,
                         height: "100%",
@@ -363,7 +400,6 @@ export default function MainLayout() {
                 </main>
             </div>
 
-            {/* StatusBar: theme / mouse style / display mode all flow through `settings` */}
             <StatusBar
                 sceneController={sceneController1}
                 theme={settings.theme}
@@ -374,13 +410,58 @@ export default function MainLayout() {
                 onDisplayModeChange={(m) => updateSetting("displayMode", m)}
             />
 
-            {/* Global settings dialog (opened from the Toolbar "Settings" button) */}
             <SettingsDialog
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}
                 settings={settings}
                 onSettingsChange={setSettings}
             />
+
+            {/* --- CUSTOM CONTEXT MENU UI --- */}
+            {contextMenu.isOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        top: contextMenu.y,
+                        left: contextMenu.x,
+                        backgroundColor: isDark ? "#242424" : "#ffffff",
+                        color: isDark ? "#e0e0e0" : "#333333",
+                        border: isDark ? "1px solid #3d3d3d" : "1px solid #cccccc",
+                        boxShadow: "0px 4px 12px rgba(0,0,0,0.25)",
+                        borderRadius: "4px",
+                        zIndex: 1000,
+                        padding: "4px 0",
+                        minWidth: "160px",
+                        fontSize: "13px",
+                    }}
+                >
+                    <div
+                        onClick={() => sceneController1?.resetCamera?.() || sceneController1?.resetView?.()}
+                        style={{ padding: "8px 12px", cursor: "pointer", transition: "background 0.1s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = isDark ? "#383838" : "#f0f0f0")}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                    >
+                        Reset View
+                    </div>
+                    <div
+                        onClick={() => toggleSetting("isSplit")}
+                        style={{ padding: "8px 12px", cursor: "pointer", transition: "background 0.1s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = isDark ? "#383838" : "#f0f0f0")}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                    >
+                        {settings.isSplit ? "Unsplit Viewport" : "Split Viewport"}
+                    </div>
+                    <hr style={{ border: "none", borderTop: isDark ? "1px solid #3d3d3d" : "1px solid #eee", margin: "4px 0" }} />
+                    <div
+                        onClick={() => setIsSettingsOpen(true)}
+                        style={{ padding: "8px 12px", cursor: "pointer", transition: "background 0.1s" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = isDark ? "#383838" : "#f0f0f0")}
+                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                    >
+                        Properties...
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

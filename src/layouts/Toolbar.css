@@ -161,19 +161,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    flex-grow: 1;         /* Hấp thụ toàn bộ không gian trống còn lại */
-    font-size: 26px;      /* Tăng từ 20px lên 26px giúp emoji to tối đa */
-    line-height: 1;       /* Khử khoảng trống line-height mặc định */
-    margin-bottom: 0;     /* Loại bỏ margin thừa */
+    width: 100%;       /* Ép vùng chứa chiếm hết chiều rộng */
+    flex-grow: 1;      /* Ép vùng chứa chiếm hết chiều cao còn lại */
+    font-size: 26px;   /* Ghi đè kích thước font chữ/emoji */
 }
 
-/* Hỗ trợ nếu sau này bạn chuyển sang dùng thẻ img hoặc svg */
 .ribbon-btn .ribbon-icon img,
 .ribbon-btn .ribbon-icon svg {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;  /* Giữ nguyên tỷ lệ, phóng to vừa khít vùng chứa */
+    width: 100%;       /* Ép thẻ SVG phóng to 100% bất chấp prop size của React */
+    height: 100%;      /* Ép thẻ SVG phóng to 100% bất chấp prop size của React */
+    object-fit: contain;
 }
 
 /* Label bên dưới */
@@ -322,4 +319,95 @@
     background: #2d2d2d;
     color: #fff;
     border: 1px solid #444;
+}
+
+
+/* Container bọc ngoài Button và Tooltip */
+.ribbon-btn-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+/* Khung Tooltip chính */
+.ribbon-tooltip-box {
+    position: absolute;
+    top: 100%; /* Hiện ngay phía dưới button */
+    left: 4px;
+    z-index: 9999;
+    display: flex;
+    gap: 12px;
+    width: max-content;
+    max-width: 280px;
+    padding: 8px 12px;
+    margin-top: 5px;
+    background-color: #ffffff;
+    color: #333333;
+    border: 1px solid #b5b5b5;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+    font-family: inherit;
+    pointer-events: none; /* Tránh cản trở chuột */
+    animation: fadeIn 0.15s ease-out;
+}
+
+/* Nếu ứng dụng đang dùng Dark Theme, bạn có thể override lại style của tooltip dựa trên theme toàn cục */
+[data-theme="dark"] .ribbon-tooltip-box {
+    background-color: #2d2d30;
+    color: #f1f1f1;
+    border: 1px solid #434346;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Khối bên trái chứa Icon phóng to */
+.ribbon-tooltip-left {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    opacity: 0.85;
+}
+
+/* Khối bên phải chứa thông tin chữ */
+.ribbon-tooltip-right {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ribbon-tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ribbon-tooltip-title {
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.ribbon-tooltip-hotkey {
+    color: #0066cc;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+[data-theme="dark"] .ribbon-tooltip-hotkey {
+    color: #4fc3f7;
+}
+
+.ribbon-tooltip-instruction {
+    margin: 0;
+    font-size: 11px;
+    color: #666666;
+    line-height: 1.35;
+    white-space: normal;
+}
+
+[data-theme="dark"] .ribbon-tooltip-instruction {
+    color: #aaaaaa;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-3px); }
+    to { opacity: 1; transform: translateY(0); }
 }

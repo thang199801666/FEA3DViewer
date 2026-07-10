@@ -3,8 +3,9 @@ import * as THREE from "three";
 import "./Toolbar.css"; 
 import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK";
 import SectionDialog from "./SectionDialog"; 
-import Icon from "../components/Icon";
+import RibbonButton from "./RibbonButton";
 
+// Configuration mappings for localized spatial orientation clipping axes
 const CLIP_AXES = [
     { key: "x", label: "X", index: 0, color: 0xff5252 },
     { key: "y", label: "Y", index: 1, color: 0x4caf50 },
@@ -36,9 +37,7 @@ export default function Toolbar({
     
     const fileInputRef = useRef(null);
 
-    // ------------------------------------------------------------------
-    // SECTION / CLIP PLANES STATE
-    // ------------------------------------------------------------------
+    // Boundary limits and active spatial clipping constraints parameters
     const [isClipOpen, setIsClipOpen] = useState(false);
     const [clip, setClip] = useState({
         x: { on: false, pos: 0, flip: false },
@@ -47,6 +46,7 @@ export default function Toolbar({
     });
     const [clipBounds, setClipBounds] = useState({ min: [-1, -1, -1], max: [1, 1, 1] });
 
+    // Instantiated Three.js logical plane structural references
     const clipPlanesRef = useRef({
         x: new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
         y: new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
@@ -56,6 +56,7 @@ export default function Toolbar({
     const clipLastCountRef = useRef(0);
     const applyClipRef = useRef(null);
 
+    // Computes aggregate bounding constraints for active mesh instances across the spatial scene
     const getModelBounds = useCallback(() => {
         const box = new THREE.Box3();
         const scene = sceneController?.scene;
@@ -67,6 +68,7 @@ export default function Toolbar({
         return box;
     }, [sceneController]);
 
+    // Internal traversal mapping interface acting explicitly across valid finite element meshes
     const forEachActorMaterial = useCallback((cb) => {
         const scene = sceneController?.scene;
         if (!scene) return;
@@ -81,6 +83,7 @@ export default function Toolbar({
         });
     }, [sceneController]);
 
+    // Updates state matrix configurations, geometries, and visual representations for active section layers
     const applyClip = useCallback((state = clip) => {
         if (!sceneController?.scene) return;
         const planes = clipPlanesRef.current;
@@ -88,7 +91,6 @@ export default function Toolbar({
         const scene = sceneController.scene;
 
         const box = getModelBounds();
-        
         const isEmpty = box.isEmpty();
         const sizeX = isEmpty ? 2 : (box.max.x - box.min.x) || 1;
         const sizeY = isEmpty ? 2 : (box.max.y - box.min.y) || 1;
@@ -158,8 +160,6 @@ export default function Toolbar({
                     const posVec = center.clone();
                     posVec.setComponent(ax.index, s.pos);
                     helpers[ax.key].position.copy(posVec);
-                    
-                    // Cập nhật trạng thái ẩn/hiện của helper dựa trên showPlane (mặc định hiển thị nếu undefined)
                     helpers[ax.key].visible = s.showPlane ?? true;
                 }
 
@@ -191,6 +191,7 @@ export default function Toolbar({
 
     useEffect(() => { applyClip(clip); }, [clip, applyClip]);
 
+    // Triggers visibility for the cross-sectional clipping control panel dialog
     const openClipDialog = () => {
         const box = getModelBounds();
         if (!box.isEmpty()) {
@@ -207,6 +208,7 @@ export default function Toolbar({
 
     const setAxis = (key, patch) => setClip((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
+    // Disposes and systematically purges all loaded clipping geometries and auxiliary components
     const clearClip = () => {
         if (sceneController?.scene) {
             const helpers = clipHelpersRef.current;
@@ -230,6 +232,7 @@ export default function Toolbar({
 
     const handleOpenClick = () => { if (fileInputRef.current) fileInputRef.current.click(); };
 
+    // Execution pipeline handling internal data parses for .vtk and .vtp files
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -250,20 +253,6 @@ export default function Toolbar({
                 
                 const actor = new Actor(mapper, file.name);
                 actor.showModelWithEdges();
-
-
-                console.log("externalSurface =", actor.externalSurface, "| keepOuterShell =", actor.keepOuterShell);
-
-                const surfTris = actor.surface.geometry.index
-                    ? actor.surface.geometry.index.count / 3
-                    : actor.surface.geometry.attributes.position.count / 3;
-                console.log("surface tris (đã lọc) =", surfTris);
-
-                if (actor.mapper) {
-                    const raw = actor.mapper.buildGeometry();
-                    const rawTris = raw.index ? raw.index.count / 3 : raw.attributes.position.count / 3;
-                    console.log("raw mapper tris =", rawTris);
-                }
 
                 if (sceneController && typeof sceneController.AddToRenderer === "function") {
                     sceneController.AddToRenderer(actor, { showContour: showContour });
@@ -303,6 +292,7 @@ export default function Toolbar({
         sceneController.resetView();
     };
 
+    // Drops and flushes out loaded simulation components inside the visualization context
     const handleClearScene = () => {
         if (!sceneController || !sceneController.scene) return;
         const scene = sceneController.scene;
@@ -349,191 +339,283 @@ export default function Toolbar({
         onSceneChanged?.();
     };
 
-    return (
-        <div className={`ribbon-toolbar ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
-            <input type="file" ref={fileInputRef} style={{ display: "none" }} accept=".vtk" onChange={handleFileChange} />
+    // Theme Configuration Palette Settings
+    let toolbarBg = "#f3f3f3";
+    let bodyBg = "#ffffff";
+    let textColor = "#333333";
+    let borderStyle = "1px solid #ccc";
+    let groupTitleBg = "#f9f9f9";
+    let groupTitleColor = "#666666";
+    let activeBtnBg = "#e2e8f0";
 
-            {/* TABS HEADER */}
-            <div className="ribbon-tabs">
-                <button className={`ribbon-tab-btn ${activeTab === "home" ? "active" : ""}`} onClick={() => setActiveTab("home")}>Home</button>
-                <button className={`ribbon-tab-btn ${activeTab === "modify" ? "active" : ""}`} onClick={() => setActiveTab("modify")}>Modify</button>
-                <button className={`ribbon-tab-btn ${activeTab === "shape" ? "active" : ""}`} onClick={() => setActiveTab("shape")}>Shape</button>
-                <button className={`ribbon-tab-btn ${activeTab === "view" ? "active" : ""}`} onClick={() => setActiveTab("view")}>View</button>
-                <button className={`ribbon-tab-btn ${activeTab === "help" ? "active" : ""}`} onClick={() => setActiveTab("help")}>Help</button>
+    if (theme === "dark") {
+        toolbarBg = "#252526";
+        bodyBg = "#1e1e1e";
+        textColor = "#cccccc";
+        borderStyle = "1px solid #3c3c3c";
+        groupTitleBg = "#2d2d2d";
+        groupTitleColor = "#888888";
+        activeBtnBg = "#3e3e42";
+    } else if (theme === "blue") {
+        toolbarBg = "#deeaf6"; 
+        bodyBg = "#ffffff";    
+        textColor = "#1e3a8a"; 
+        borderStyle = "1px solid #a3b8cc";
+        groupTitleBg = "#f1f5f9";
+        groupTitleColor = "#475569";
+        activeBtnBg = "#bae6fd"; 
+    }
+
+    return (
+        <div className="ribbon-toolbar" style={{ background: toolbarBg, borderBottom: borderStyle, color: textColor, transition: "all 0.15s ease" }}>
+            <input type="file" ref={fileInputRef} style={{ display: "none" }} accept=".vtk,.vtp" onChange={handleFileChange} />
+
+            {/* Ribbon Interface Header Tab Switchers */}
+            <div className="ribbon-tabs" style={{ display: "flex", gap: "2px", padding: "4px 4px 0 4px" }}>
+                {["home", "modify", "shape", "view", "help"].map((tab) => {
+                    const isActive = activeTab === tab;
+                    let tabStyle = {
+                        background: "transparent",
+                        border: "1px solid transparent",
+                        color: textColor,
+                        padding: "4px 12px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        borderBottom: "none",
+                        borderTopLeftRadius: "3px",
+                        borderTopRightRadius: "3px"
+                    };
+                    if (isActive) {
+                        tabStyle.background = bodyBg;
+                        tabStyle.border = borderStyle;
+                        tabStyle.borderBottom = `1px solid ${bodyBg}`;
+                        tabStyle.fontWeight = "bold";
+                        tabStyle.position = "relative";
+                        tabStyle.zIndex = 2;
+                    }
+                    return (
+                        <button 
+                            key={tab}
+                            style={tabStyle}
+                            onClick={() => setActiveTab(tab)}
+                        >
+                            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        </button>
+                    );
+                })}
             </div>
 
-            {/* RIBBON BODY */}
-            <div className="ribbon-body">
+            {/* Ribbon Segment Container Control Groups */}
+            <div className="ribbon-body" style={{ background: bodyBg, borderTop: borderStyle, display: "flex", gap: "10px", padding: "6px", marginTop: "-1px" }}>
+                
+                {/* Home Operations Category */}
                 {activeTab === "home" && (
                     <>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button className="ribbon-btn" onClick={handleOpenClick}>
-                                        <Icon name="folder-open" size={24} className="ribbon-icon" />
-                                        <span className="ribbon-label">Open</span>
-                                    </button>
-                                <button className="ribbon-btn" onClick={handleResetView}>
-                                    <Icon name="fitcontent" size={24} className="ribbon-icon" />
-                                    <span className="ribbon-label">Reset</span>
-                                </button>
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="folder-open" 
+                                    label="Open" 
+                                    hotkey="Ctrl+O"
+                                    instruction="Import structural datasets from standard legacy .vtk or .vtp file models into the render context."
+                                    textColor={textColor}
+                                    onClick={handleOpenClick}
+                                />
+                                <RibbonButton 
+                                    icon="fitcontent" 
+                                    label="Reset" 
+                                    hotkey="Esc"
+                                    instruction="Restore target view position vector alignments back to default coordinates state parameters."
+                                    textColor={textColor}
+                                    onClick={handleResetView}
+                                />
                             </div>
-                            <div className="ribbon-group-title">File & Reset</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>File & Reset</div>
                         </div>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button className="ribbon-btn" onClick={onOpenSettings} title="System configuration">
-                                    <Icon name="setting" size={24} className="ribbon-icon" />
-                                    <span className="ribbon-label">Settings</span>
-                                </button>
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="setting" 
+                                    label="Settings" 
+                                    instruction="Open systems parameters configurations window panel to adapt default renderer targets."
+                                    textColor={textColor}
+                                    onClick={onOpenSettings}
+                                />
                             </div>
-                            <div className="ribbon-group-title">Configuration</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Configuration</div>
                         </div>
                     </>
                 )}
 
+                {/* Modification Operations Category */}
                 {activeTab === "modify" && (
                     <>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button className="ribbon-btn" onClick={handleClearScene} title="Clear all objects in the scene">
-                                    <Icon name="clearBrush" size={24} className="ribbon-icon" />
-                                    <span className="ribbon-label">Clear All</span>
-                                </button>
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="clearBrush" 
+                                    label="Clear All" 
+                                    instruction="Flush all elements, actors, geometries, and reference datasets out of the pipeline canvas context."
+                                    textColor={textColor}
+                                    onClick={handleClearScene}
+                                />
                             </div>
-                            <div className="ribbon-group-title">Scene Actions</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Scene Actions</div>
                         </div>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button
-                                    className={`ribbon-btn ${(clip.x.on || clip.y.on || clip.z.on) ? "active" : ""}`}
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="section" 
+                                    label="Section" 
+                                    hotkey="Ctrl+S"
+                                    instruction="Initialize planar matrix cross-sectional slicing variables across active element boundaries."
+                                    textColor={textColor}
+                                    active={(clip.x.on || clip.y.on || clip.z.on)}
+                                    activeBtnBg={activeBtnBg}
                                     onClick={openClipDialog}
-                                    title="Cut model using X/Y/Z planes and shift via sliders"
-                                >
-                                    <Icon name="section" size={24} className="ribbon-icon" />
-                                    <span className="ribbon-label">Section</span>
-                                </button>
+                                />
                             </div>
-                            <div className="ribbon-group-title">Clipping</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Clipping</div>
                         </div>
                     </>
                 )}
 
+                {/* Primitives Construction Category */}
                 {activeTab === "shape" && (
-                    <div className="ribbon-group">
-                        <div className="ribbon-group-content">
-                            <button className="ribbon-btn" onClick={handleOpenBoxDialog} title="Add a primitive Box shape">
-                                <Icon name="box" size={24} className="ribbon-icon" />
-                                <span className="ribbon-label">Box</span>
-                            </button>
+                    <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                        <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                            <RibbonButton 
+                                icon="box" 
+                                label="Box" 
+                                instruction="Generate a solid mesh configuration primitive entity bounding specified geometric scale constants."
+                                textColor={textColor}
+                                onClick={handleOpenBoxDialog}
+                            />
                         </div>
-                        <div className="ribbon-group-title">Primitives</div>
+                        <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Primitives</div>
                     </div>
                 )}
 
+                {/* Viewport Projection Category */}
                 {activeTab === "view" && (
                     <>
-                        <div className="ribbon-group">
-                            {/* HORIZONTAL LAYOUT FOR 7 VIEW ORIENTATIONS + FIT VIEW */}
-                            <div className="ribbon-group-content horizontal-views-layout">
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("front")}>FRONT</button>
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("back")}>BACK</button>
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("top")}>TOP</button>
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("bottom")}>BOTTOM</button>
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("left")}>LEFT</button>
-                                <button className="ribbon-btn ribbon-btn-geo" onClick={() => handleSetView("right")}>RIGHT</button>
-                                <button className="ribbon-btn ribbon-btn-geo ISO" onClick={() => handleSetView("iso")}>ISO</button>
-                                
-                                <div className="ribbon-separator"></div>
+                        {/* Orientation Tracking Controls */}
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                                {["front", "back", "top", "bottom", "left", "right", "iso"].map((view) => (
+                                    <RibbonButton 
+                                        key={view}
+                                        icon={`${view === "iso" ? "isometric" : view}view`}
+                                        label={view.charAt(0).toUpperCase() + view.slice(1)}
+                                        instruction={`Align camera matrices transformation mapping vectors looking directly from the ${view} layout angle.`}
+                                        textColor={textColor}
+                                        onClick={() => handleSetView(view)}
+                                    />
+                                ))}
 
-                                <button className="ribbon-btn" onClick={handleFitView} title="Zoom to fit window screen">
-                                    <Icon name="fitcontent" size={24} className="ribbon-icon" />
-                                    <span className="ribbon-label">Fit</span>
-                                </button>
+                                <div className="ribbon-separator" style={{ borderLeft: borderStyle, height: "20px", margin: "0 4px" }}></div>
+                                
+                                <RibbonButton 
+                                    icon="fit-view" 
+                                    label="Fit" 
+                                    instruction="Re-scale camera viewing frustum bounds parameters encapsulating every existing model geometry."
+                                    textColor={textColor}
+                                    onClick={handleFitView}
+                                />
                             </div>
-                            <div className="ribbon-group-title">Orientations & Camera</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Orientations & Camera</div>
                         </div>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button className={`ribbon-btn ${isSplit ? "active" : ""}`} onClick={onToggleSplit}>
-                                    <span className="ribbon-icon">🥞</span>
-                                    <span className="ribbon-label">Split View</span>
-                                </button>
-                                <button 
-                                    className={`ribbon-btn ${isViewLinked && isSplit ? "active" : ""}`} 
-                                    onClick={onToggleViewLink}
+
+                        {/* Viewport Split Partition Layout Controls */}
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="split" 
+                                    label="Split View" 
+                                    instruction="Toggle multi-view viewport configuration layout dividing the central render node space horizontally."
+                                    textColor={textColor}
+                                    active={isSplit}
+                                    activeBtnBg={activeBtnBg}
+                                    onClick={onToggleSplit}
+                                />
+                                <RibbonButton 
+                                    icon="link" 
+                                    label="Link View" 
+                                    instruction="Synchronize rotation, panning, and zoom transforms variables across dual partitioned viewports."
+                                    textColor={textColor}
+                                    active={(isViewLinked && isSplit)}
+                                    activeBtnBg={activeBtnBg}
                                     disabled={!isSplit}
-                                    title={isSplit ? "Link cameras between different views" : "Only available when Split View is enabled"}
-                                >
-                                    <span className="ribbon-icon">🔗</span>
-                                    <span className="ribbon-label">Link View</span>
-                                </button>
+                                    onClick={onToggleViewLink}
+                                />
                             </div>
-                            <div className="ribbon-group-title">Layouts</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Layouts</div>
                         </div>
-                        <div className="ribbon-group">
-                            <div className="ribbon-group-content">
-                                <button className={`ribbon-btn ${showGrid ? "active" : ""}`} onClick={onToggleGrid}>
-                                    <span className="ribbon-icon">🌐</span>
-                                    <span className="ribbon-label">Grid</span>
-                                </button>
-                                
-                                {/* SEPARATE: AXES BUTTON (ORIGIN AXES) */}
-                                <button className={`ribbon-btn ${showAxes ? "active" : ""}`} onClick={onToggleAxes} title="Show/hide origin coordinate axes">
-                                    <span className="ribbon-icon">📐</span>
-                                    <span className="ribbon-label">Axes</span>
-                                </button>
 
-                                {/* SEPARATE: CAM NAV TOGGLE BUTTON (ENABLED BY DEFAULT) */}
-                                <button 
-                                    className={`ribbon-btn ${sceneController?.showCameraNav ? "active" : ""}`} 
+                        {/* Structural Layer Auxiliary Visibility Elements */}
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="grid" label="Grid" textColor={textColor} active={showGrid} activeBtnBg={activeBtnBg} onClick={onToggleGrid}
+                                    instruction="Toggle global reference coordinate workspace base ground grid visibility status."
+                                />
+                                <RibbonButton 
+                                    icon="axes" label="Axes" textColor={textColor} active={showAxes} activeBtnBg={activeBtnBg} onClick={onToggleAxes}
+                                    instruction="Toggle visible local origin coordinate tracking system directional vector arrow indicators."
+                                />
+                                <RibbonButton 
+                                    icon="camera-orientation" label="Cam Nav" textColor={textColor} active={sceneController?.showCameraNav} activeBtnBg={activeBtnBg}
+                                    instruction="Toggle navigation direction orientation interactive block cube inside active view views."
                                     onClick={() => {
                                         if (sceneController && typeof sceneController.ToggleCameraNav === "function") {
                                             sceneController.ToggleCameraNav();
-                                            onSceneChanged?.(); // Trigger toolbar re-render to synchronize active state class
+                                            onSceneChanged?.(); 
                                         }
-                                    }} 
-                                    title="Show/hide camera navigation block (Cube / Compass / Navigation)"
-                                >
-                                    <span className="ribbon-icon">🧭</span>
-                                    <span className="ribbon-label">Cam Nav</span>
-                                </button>
-
-                                <button className={`ribbon-btn ${showRuler ? "active" : ""}`} onClick={onToggleRuler}>
-                                    <span className="ribbon-icon">📏</span>
-                                    <span className="ribbon-label">Ruler</span>
-                                </button>
-                                <button className={`ribbon-btn ${showTextBlock ? "active" : ""}`} onClick={onToggleTextBlock}>
-                                    <span className="ribbon-icon">📝</span>
-                                    <span className="ribbon-label">Notes</span>
-                                </button>
-                                <button className={`ribbon-btn ${showContour ? "active" : ""}`} onClick={handleToggleContour} title="Activate Plot Contour to show/hide scalar color data field">
-                                    <span className="ribbon-icon">🌈</span>
-                                    <span className="ribbon-label">Contour</span>
-                                </button>
+                                    }}
+                                />
+                                <RibbonButton 
+                                    icon="ruler" label="Ruler" textColor={textColor} active={showRuler} activeBtnBg={activeBtnBg} onClick={onToggleRuler}
+                                    instruction="Toggle mouse pointer metrics measuring tool to determine distance between surface coordinates nodes."
+                                />
+                                <RibbonButton 
+                                    icon="notes" label="Notes" textColor={textColor} active={showTextBlock} activeBtnBg={activeBtnBg} onClick={onToggleTextBlock}
+                                    instruction="Display on-screen presentation text fields editor block for context tracking documentation."
+                                />
+                                <RibbonButton 
+                                    icon="L-contour-3d" label="Contour" textColor={textColor} active={showContour} activeBtnBg={activeBtnBg} onClick={handleToggleContour}
+                                    instruction="Render post-processing continuous isoline color map gradients derived from calculated node arrays."
+                                />
                             </div>
-                            <div className="ribbon-group-title">Display Toggles</div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Display Toggles</div>
                         </div>
                     </>
                 )}
 
+                {/* Support Reference Channels Category */}
                 {activeTab === "help" && (
-                    <div className="ribbon-group">
-                        <div className="ribbon-group-content">
-                            <a className="ribbon-btn" href="#documentation" target="_blank" rel="noreferrer">
-                                <span className="ribbon-icon">📖</span>
-                                <span className="ribbon-label">Docs</span>
-                            </a>
-                            <button className="ribbon-btn" onClick={() => alert("FEA Viewer Version 1.0.0")}>
-                                <span className="ribbon-icon">ℹ️</span>
-                                <span className="ribbon-label">About</span>
-                            </button>
+                    <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                        <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                            <RibbonButton 
+                                icon="📖" 
+                                label="Docs" 
+                                instruction="Launch complete application user manual guide detailing algorithmic implementations and user workflow steps."
+                                textColor={textColor}
+                                href="#documentation" target="_blank" rel="noreferrer"
+                            />
+                            <RibbonButton 
+                                icon="ℹ️" 
+                                label="About" 
+                                instruction="Display core build information metadata configurations for this active FEA execution software platform."
+                                textColor={textColor}
+                                onClick={() => alert("FEA Viewer Version 1.0.0")}
+                            />
                         </div>
-                        <div className="ribbon-group-title">Support</div>
+                        <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Support</div>
                     </div>
                 )}
             </div>
 
-            {/* BOX PRIMITIVE DIALOG */}
+            {/* Modal Input Form Interface Handling Box Boundary Initializations */}
             {isOpenDialog && (
                 <div className="modal-overlay">
                     <div className="modal-container">
