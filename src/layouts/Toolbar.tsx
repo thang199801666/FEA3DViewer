@@ -1,19 +1,96 @@
-import { useState, useRef, useEffect, useCallback } from "react"; 
+import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from "react"; 
 import * as THREE from "three";
 import "./Toolbar.css"; 
-import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK";
+// Note: You might need to supply declaration definitions file (.d.ts) matching these relative paths requirements module context
+import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK/src";
 import SectionDialog from "./SectionDialog"; 
 import RibbonButton from "./RibbonButton";
 
-// Configuration mappings for localized spatial orientation clipping axes
-const CLIP_AXES = [
+// Definition requirements targeting discrete clipping spatial mapping coordinates configuration axes 
+interface ClipAxisConfig {
+    key: "x" | "y" | "z";
+    label: string;
+    index: number;
+    color: number;
+}
+
+const CLIP_AXES: ClipAxisConfig[] = [
     { key: "x", label: "X", index: 0, color: 0xff5252 },
     { key: "y", label: "Y", index: 1, color: 0x4caf50 },
     { key: "z", label: "Z", index: 2, color: 0x448aff },
 ];
 
+// Configuration layout mapped inside active axis cross-section slicing elements parameters
+interface AxisClipSettings {
+    on: boolean;
+    pos: number;
+    flip: boolean;
+    showPlane?: boolean;
+}
+
+interface ClipState {
+    x: AxisClipSettings;
+    y: AxisClipSettings;
+    z: AxisClipSettings;
+}
+
+interface ClipBounds {
+    min: [number, number, number];
+    max: [number, number, number];
+}
+
+interface BoxDimensions {
+    length: number | string;
+    width: number | string;
+    height: number | string;
+}
+
+// Custom interface schema representing dynamic configurations parameterizing structural scene controller pipeline instances
+interface SceneControllerInstance {
+    scene: THREE.Scene;
+    renderWindow?: {
+        renderer?: {
+            localClippingEnabled: boolean;
+        };
+    };
+    showCameraNav?: boolean;
+    _actorCounter?: number;
+    scalarBar?: {
+        setVisible: (visible: boolean) => void;
+    };
+    requestRender?: () => void;
+    AddToRenderer?: (actor: any, options?: { showContour?: boolean }) => void;
+    updateClipping?: () => void;
+    fitView?: () => void;
+    setView?: (viewName: string) => void;
+    resetView?: () => void;
+    addBoxActor?: (length: number, width: number, height: number) => any;
+    PlotContour?: (state: boolean) => void;
+    ToggleCameraNav?: () => void;
+}
+
+// Definition specification requirements targeting explicit Toolbar props mappings instances
+interface ToolbarProps {
+    theme?: "light" | "dark" | "blue" | string;
+    sceneController: SceneControllerInstance | null | undefined;
+    onSceneChanged?: () => void;
+    isSplit: boolean;
+    onToggleSplit: () => void;
+    isViewLinked: boolean;
+    onToggleViewLink: () => void;
+    showTextBlock: boolean;
+    onToggleTextBlock: () => void;
+    showAxes: boolean;
+    onToggleAxes: () => void;
+    showRuler: boolean;
+    onToggleRuler: () => void;
+    showGrid: boolean;
+    onToggleGrid: () => void;
+    onOpenSettings: () => void;
+}
+
 export default function Toolbar({ 
-    theme,
+    theme = "light", // Fallback to "light" defaults if undefined to guarantee type safety down the tree
     sceneController, 
     onSceneChanged, 
     isSplit, 
@@ -29,62 +106,79 @@ export default function Toolbar({
     showGrid,
     onToggleGrid,
     onOpenSettings  
-}) {
-    const [activeTab, setActiveTab] = useState("home");
-    const [isOpenDialog, setIsOpenDialog] = useState(false);
-    const [boxDimensions, setBoxDimensions] = useState({ length: 1, width: 1, height: 1 });
-    const [showContour, setShowContour] = useState(false);
+}: ToolbarProps) {
+    const [activeTab, setActiveTab] = useState<string>("home");
+    const [isOpenDialog, setIsOpenDialog] = useState<boolean>(false);
+    const [boxDimensions, setBoxDimensions] = useState<BoxDimensions>({ length: 1, width: 1, height: 1 });
+    const [showContour, setShowContour] = useState<boolean>(false);
     
-    const fileInputRef = useRef(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Boundary limits and active spatial clipping constraints parameters
-    const [isClipOpen, setIsClipOpen] = useState(false);
-    const [clip, setClip] = useState({
-        x: { on: false, pos: 0, flip: false },
-        y: { on: false, pos: 0, flip: false },
-        z: { on: false, pos: 0, flip: false },
+    const [isClipOpen, setIsClipOpen] = useState<boolean>(false);
+    const [clip, setClip] = useState<ClipState>({
+        x: { on: false, pos: 0, flip: false, showPlane: true },
+        y: { on: false, pos: 0, flip: false, showPlane: true },
+        z: { on: false, pos: 0, flip: false, showPlane: true },
     });
-    const [clipBounds, setClipBounds] = useState({ min: [-1, -1, -1], max: [1, 1, 1] });
+    const [clipBounds, setClipBounds] = useState<ClipBounds>({ min: [-1, -1, -1], max: [1, 1, 1] });
 
     // Instantiated Three.js logical plane structural references
-    const clipPlanesRef = useRef({
+    const clipPlanesRef = useRef<{ x: THREE.Plane; y: THREE.Plane; z: THREE.Plane }>({
         x: new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
         y: new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
         z: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
     });
-    const clipHelpersRef = useRef({ x: null, y: null, z: null });
-    const clipLastCountRef = useRef(0);
-    const applyClipRef = useRef(null);
+    
+    const clipHelpersRef = useRef<{ x: THREE.Group | null; y: THREE.Group | null; z: THREE.Group | null }>({ 
+        x: null, 
+        y: null, 
+        z: null 
+    });
+    const clipLastCountRef = useRef<number>(0);
+    const applyClipRef = useRef<((state?: ClipState) => void) | null>(null);
 
     // Computes aggregate bounding constraints for active mesh instances across the spatial scene
-    const getModelBounds = useCallback(() => {
+    const getModelBounds = useCallback((): THREE.Box3 => {
         const box = new THREE.Box3();
         const scene = sceneController?.scene;
         if (!scene) return box;
         scene.updateMatrixWorld(true);
-        scene.traverse((o) => {
-            if (o.isActor && o.name !== "system_grid") box.expandByObject(o);
+        scene.traverse((o: THREE.Object3D) => {
+            if ("isActor" in o && (o as any).isActor && o.name !== "system_grid") {
+                box.expandByObject(o);
+            }
         });
         return box;
     }, [sceneController]);
 
     // Internal traversal mapping interface acting explicitly across valid finite element meshes
-    const forEachActorMaterial = useCallback((cb) => {
+    const forEachActorMaterial = useCallback((cb: (material: THREE.Material) => void): void => {
         const scene = sceneController?.scene;
         if (!scene) return;
-        scene.traverse((o) => {
+        scene.traverse((o: THREE.Object3D) => {
             if (o.name === "clip_plane_helper" || o.name === "system_grid") return;
-            if (!o.material) return;
-            let p = o, isInActor = false;
-            while (p) { if (p.isActor) { isInActor = true; break; } p = p.parent; }
+            if (!("material" in o) || !(o as any).material) return;
+            
+            let p: THREE.Object3D | null = o;
+            let isInActor = false;
+            while (p) { 
+                if ("isActor" in p && (p as any).isActor) { 
+                    isInActor = true; 
+                    break; 
+                } 
+                p = p.parent; 
+            }
             if (!isInActor) return;
-            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            
+            const targetMaterial = (o as any).material;
+            const mats: THREE.Material[] = Array.isArray(targetMaterial) ? targetMaterial : [targetMaterial];
             mats.forEach(cb);
         });
     }, [sceneController]);
 
     // Updates state matrix configurations, geometries, and visual representations for active section layers
-    const applyClip = useCallback((state = clip) => {
+    const applyClip = useCallback((state: ClipState = clip): void => {
         if (!sceneController?.scene) return;
         const planes = clipPlanesRef.current;
         const helpers = clipHelpersRef.current;
@@ -97,7 +191,7 @@ export default function Toolbar({
         const sizeZ = isEmpty ? 2 : (box.max.z - box.min.z) || 1;
         const center = isEmpty ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
 
-        const active = [];
+        const active: THREE.Plane[] = [];
         for (const ax of CLIP_AXES) {
             const s = state[ax.key];
             const plane = planes[ax.key];
@@ -141,7 +235,6 @@ export default function Toolbar({
                     ]);
                     const lineMat = new THREE.LineBasicMaterial({ 
                         color: ax.color, 
-                        linewidth: 1,
                         transparent: true,
                         opacity: 0.6 
                     });
@@ -159,32 +252,32 @@ export default function Toolbar({
                 if (helpers[ax.key]) {
                     const posVec = center.clone();
                     posVec.setComponent(ax.index, s.pos);
-                    helpers[ax.key].position.copy(posVec);
-                    helpers[ax.key].visible = s.showPlane ?? true;
+                    helpers[ax.key]!.position.copy(posVec);
+                    helpers[ax.key]!.visible = s.showPlane ?? true;
                 }
 
             } else if (helpers[ax.key]) {
-                scene.remove(helpers[ax.key]);
-                helpers[ax.key].traverse((child) => {
-                    if (child.geometry) child.geometry.dispose();
-                    if (child.material) child.material.dispose();
+                scene.remove(helpers[ax.key]!);
+                helpers[ax.key]!.traverse((child: THREE.Object3D) => {
+                    if ("geometry" in child && (child as any).geometry) (child as any).geometry.dispose();
+                    if ("material" in child && (child as any).material) (child as any).material.dispose();
                 });
                 helpers[ax.key] = null;
             }
         }
 
         const countChanged = active.length !== clipLastCountRef.current;
-        forEachActorMaterial((m) => {
+        forEachActorMaterial((m: any) => {
             m.clippingPlanes = active.length ? active : null;
             m.clipIntersection = false;
             if (countChanged) m.needsUpdate = true;
         });
         clipLastCountRef.current = active.length;
 
-        const rw = sceneController.renderWindow;
+        const rw = sceneController?.renderWindow;
         if (rw?.renderer) rw.renderer.localClippingEnabled = true;
 
-        sceneController.requestRender?.();
+        sceneController?.requestRender?.();
     }, [sceneController, clip, getModelBounds, forEachActorMaterial]);
 
     applyClipRef.current = applyClip;
@@ -192,7 +285,7 @@ export default function Toolbar({
     useEffect(() => { applyClip(clip); }, [clip, applyClip]);
 
     // Triggers visibility for the cross-sectional clipping control panel dialog
-    const openClipDialog = () => {
+    const openClipDialog = (): void => {
         const box = getModelBounds();
         if (!box.isEmpty()) {
             const min = box.min, max = box.max, c = box.getCenter(new THREE.Vector3());
@@ -206,20 +299,22 @@ export default function Toolbar({
         setIsClipOpen(true);
     };
 
-    const setAxis = (key, patch) => setClip((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+    const setAxis = (key: "x" | "y" | "z", patch: Partial<AxisClipSettings>): void => 
+        setClip((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
     // Disposes and systematically purges all loaded clipping geometries and auxiliary components
-    const clearClip = () => {
+    const clearClip = (): void => {
         if (sceneController?.scene) {
             const helpers = clipHelpersRef.current;
             for (const key in helpers) {
-                if (helpers[key]) {
-                    sceneController.scene.remove(helpers[key]);
-                    helpers[key].traverse((child) => {
-                        if (child.geometry) child.geometry.dispose();
-                        if (child.material) child.material.dispose();
+                const k = key as "x" | "y" | "z";
+                if (helpers[k]) {
+                    sceneController.scene.remove(helpers[k]!);
+                    helpers[k]!.traverse((child: THREE.Object3D) => {
+                        if ("geometry" in child && (child as any).geometry) (child as any).geometry.dispose();
+                        if ("material" in child && (child as any).material) (child as any).material.dispose();
                     });
-                    helpers[key] = null;
+                    helpers[k] = null;
                 }
             }
         }
@@ -230,11 +325,11 @@ export default function Toolbar({
         });
     };
 
-    const handleOpenClick = () => { if (fileInputRef.current) fileInputRef.current.click(); };
+    const handleOpenClick = (): void => { if (fileInputRef.current) fileInputRef.current.click(); };
 
     // Execution pipeline handling internal data parses for .vtk and .vtp files
-    const handleFileChange = (e) => {
-        const file = e.target.files[0];
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
+        const file = e.target.files?.[0];
         if (!file) return;
         const isVTK = file.name.endsWith(".vtk");
         const isVTP = file.name.endsWith(".vtp");
@@ -243,9 +338,11 @@ export default function Toolbar({
         const reader = new FileReader();
         reader.onload = (event) => {
             try {
+                if (!event.target?.result) return;
+                
                 const polyData = isVTK
-                    ? new VTKLegacyReader().parse(event.target.result)
-                    : new VTPReader().parse(event.target.result);
+                    ? new VTKLegacyReader().parse(event.target.result as string)
+                    : new VTPReader().parse(event.target.result as ArrayBuffer);
 
                 const mapper = new PolyDataMapper().setInputData(polyData).setLookupTable(new LookupTable());
                 mapper.setInterpolateScalarsBeforeMapping(true);
@@ -256,14 +353,14 @@ export default function Toolbar({
 
                 if (sceneController && typeof sceneController.AddToRenderer === "function") {
                     sceneController.AddToRenderer(actor, { showContour: showContour });
-                } else {
+                } else if (sceneController?.scene) {
                     sceneController.scene.add(actor);
-                    sceneController.updateClipping();
-                    sceneController.fitView();
+                    sceneController.updateClipping?.();
+                    sceneController.fitView?.();
                 }
                 applyClipRef.current?.();
                 onSceneChanged?.();
-            } catch (err) {
+            } catch (err: any) {
                 console.error(err);
                 alert(`Cannot read file: ${err.message}`);
             }
@@ -272,8 +369,8 @@ export default function Toolbar({
         e.target.value = "";
     };
 
-    const handleFitView = () => {
-        const tryFitView = () => {
+    const handleFitView = (): void => {
+        const tryFitView = (): boolean => {
             if (!sceneController || typeof sceneController.fitView !== "function") return false;
             sceneController.fitView();
             return true;
@@ -282,28 +379,29 @@ export default function Toolbar({
         requestAnimationFrame(() => { if (!tryFitView()) window.setTimeout(tryFitView, 50); });
     };
 
-    const handleSetView = (viewName) => {
+    const handleSetView = (viewName: string): void => {
         if (!sceneController || typeof sceneController.setView !== "function") return;
         sceneController.setView(viewName);
     };
 
-    const handleResetView = () => {
+    const handleResetView = (): void => {
         if (!sceneController || typeof sceneController.resetView !== "function") return;
         sceneController.resetView();
     };
 
     // Drops and flushes out loaded simulation components inside the visualization context
-    const handleClearScene = () => {
+    const handleClearScene = (): void => {
         if (!sceneController || !sceneController.scene) return;
         const scene = sceneController.scene;
         for (let i = scene.children.length - 1; i >= 0; i--) {
             const child = scene.children[i];
-            if (child.isActor) {
+            if ("isActor" in child && (child as any).isActor) {
                 scene.remove(child);
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-                    else child.material.dispose();
+                if ("geometry" in child && (child as any).geometry) (child as any).geometry.dispose();
+                if ("material" in child && (child as any).material) {
+                    const mat = (child as any).material;
+                    if (Array.isArray(mat)) mat.forEach((m: any) => m.dispose());
+                    else mat.dispose();
                 }
             }
         }
@@ -313,8 +411,8 @@ export default function Toolbar({
         onSceneChanged?.();
     };
 
-    const handleOpenBoxDialog = () => setIsOpenDialog(true);
-    const handleConfirmAddBox = () => {
+    const handleOpenBoxDialog = (): void => setIsOpenDialog(true);
+    const handleConfirmAddBox = (): void => {
         if (sceneController && typeof sceneController.addBoxActor === "function") {
             const { length, width, height } = boxDimensions;
             const boxActor = sceneController.addBoxActor(Number(length), Number(width), Number(height));
@@ -326,12 +424,13 @@ export default function Toolbar({
         applyClipRef.current?.();
         setIsOpenDialog(false);
     };
-    const handleInputChange = (e) => {
+    
+    const handleInputChange = (e: ChangeEvent<HTMLInputElement>): void => {
         const { name, value } = e.target;
         setBoxDimensions(prev => ({ ...prev, [name]: value }));
     };
 
-    const handleToggleContour = () => {
+    const handleToggleContour = (): void => {
         if (!sceneController) return;
         const nextState = !showContour;
         setShowContour(nextState);
@@ -374,7 +473,7 @@ export default function Toolbar({
             <div className="ribbon-tabs" style={{ display: "flex", gap: "2px", padding: "4px 4px 0 4px" }}>
                 {["home", "modify", "shape", "view", "help"].map((tab) => {
                     const isActive = activeTab === tab;
-                    let tabStyle = {
+                    let tabStyle: React.CSSProperties = {
                         background: "transparent",
                         border: "1px solid transparent",
                         color: textColor,
@@ -640,6 +739,7 @@ export default function Toolbar({
                 clipBounds={clipBounds}
                 setAxis={setAxis}
                 clearClip={clearClip}
+                theme={theme}
             />
         </div>
     );
