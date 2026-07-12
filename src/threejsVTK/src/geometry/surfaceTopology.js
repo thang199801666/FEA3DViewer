@@ -13,6 +13,7 @@ import { weldVertices } from "./weld.js";
  * @param {boolean} [opts.recomputeNormals=true] - If true, updates vertex normals on output mesh.
  * @returns {THREE.BufferGeometry} New extracted surface geometry, or original if no modifications occurred.
  */
+
 export function extractByTopology(geometry, opts = {}) {
     const {
         removeInternalWalls = true,
@@ -25,8 +26,19 @@ export function extractByTopology(geometry, opts = {}) {
     if (!pos || pos.count < 3) return geometry;
     if (!removeInternalWalls && !keepOuterShell) return geometry;
 
+    // --- FIX: ESCAPE IF GEOMETRY IS EXPLICITLY LINE/POINT DATA ---
+    if (
+        geometry.isLineSegments2 || 
+        geometry.isLineSegments || 
+        geometry.userData?.primitiveType === "line" ||
+        geometry.userData?.isLine === true
+    ) {
+        return geometry;
+    }
+    // -------------------------------------------------------------
+
     const index = geometry.getIndex();
-    const triCount = index ? index.count / 3 : pos.count / 3;
+    const triCount = Math.floor(index ? index.count / 3 : pos.count / 3);
     const vertOf = index ? (t, k) => index.getX(t * 3 + k) : (t, k) => t * 3 + k;
 
     if (!geometry.boundingBox) geometry.computeBoundingBox();

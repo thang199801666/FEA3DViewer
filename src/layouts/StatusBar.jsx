@@ -5,7 +5,9 @@ export default function StatusBar({
     mouseStyle = "Blender",
     onMouseStyleChange,
     displayMode = "modelWithEdges",
-    onDisplayModeChange 
+    onDisplayModeChange,
+    selectionMode = "Part",
+    onSelectionModeChange 
 }) {
     // Dynamic styles depending on light, dark, or Blue Office look
     let containerBg = "#e0e0e0";
@@ -60,6 +62,22 @@ export default function StatusBar({
             <div>Status: <span style={{ color: theme === "blue" ? "#047857" : "#4caf50", fontWeight: "bold" }}>● Ready</span></div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
+                {/* Selection Mode Selector */}
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ fontSize: "11px", opacity: 0.8 }}>Select:</span>
+                    <select
+                        value={selectionMode}
+                        onChange={(e) => onSelectionModeChange?.(e.target.value)}
+                        style={selectStyle}
+                    >
+                        <option value="Part">Part</option>
+                        <option value="Surface">Surface</option>
+                        <option value="Point">Point</option>
+                        <option value="Element">Element</option>
+                        <option value="Node">Node</option>
+                    </select>
+                </div>
+
                 {/* Display Mode Selector */}
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     <span style={{ fontSize: "11px", opacity: 0.8 }}>Display:</span>

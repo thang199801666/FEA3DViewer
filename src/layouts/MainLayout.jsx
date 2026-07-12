@@ -321,6 +321,7 @@ export default function MainLayout() {
                             addDefaultLights={settings.addDefaultLights}
                             ambientIntensity={settings.ambientIntensity}
                             directionalIntensity={settings.directionalIntensity}
+                            selectionMode={settings.selectionMode}
                         />
                         {settings.isSplit && (
                             <div
@@ -375,6 +376,7 @@ export default function MainLayout() {
                                 addDefaultLights={settings.addDefaultLights}
                                 ambientIntensity={settings.ambientIntensity}
                                 directionalIntensity={settings.directionalIntensity}
+                                selectionMode={settings.selectionMode}
                             />
                             <div
                                 style={{
@@ -408,6 +410,8 @@ export default function MainLayout() {
                 onMouseStyleChange={(s) => updateSetting("navStyle", s)}
                 displayMode={settings.displayMode}
                 onDisplayModeChange={(m) => updateSetting("displayMode", m)}
+                selectionMode={settings.selectionMode}
+                onSelectionModeChange={(m) => updateSetting("selectionMode", m)}
             />
 
             <SettingsDialog

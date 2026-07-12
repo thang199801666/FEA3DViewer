@@ -69,6 +69,7 @@ export default function Scene({
     addDefaultLights = false,
     ambientIntensity = 0.5,
     directionalIntensity = 1.0,
+    selectionMode = "Part"
 }) {
     const containerRef = useRef();
     const textBlockRef = useRef(null);
@@ -96,6 +97,13 @@ export default function Scene({
     useEffect(() => {
         sceneControllerRef.current?.interactorStyle?.setNavStyle(navStyle);
     }, [navStyle]);
+
+    // Effect đồng bộ hóa Selection Mode khi prop từ component cha thay đổi
+    useEffect(() => {
+        if (sceneControllerRef.current?.pickingController) {
+            sceneControllerRef.current.pickingController.setSelectionMode(selectionMode);
+        }
+    }, [selectionMode]);
 
     useEffect(() => {
         if (viewportIndex !== 1 || !sharedScene) return;
@@ -132,24 +140,20 @@ export default function Scene({
         const triadConfig = { position: "bottom-left", size: 120 };
         const padding = 20;
 
-        // ── 1) RenderWindow: Owns WebGLRenderer + Canvas ────────────────────
         const renderWindow = new RenderWindow({
             container,
-            // Configures multi-sampling (MSAA) via initialization parameters like VTK.
-            // If multiSamples > 1, enforce WebGLRenderer's antialias to true.
             rendererParams: { 
                 antialias: antialias || multiSamples > 1, 
                 alpha: true,
                 samples: multiSamples 
             },
         });
-        const glRenderer = renderWindow.renderer;   // THREE.WebGLRenderer
+        const glRenderer = renderWindow.renderer;
         glRenderer.setClearColor(0x000000, 0);
         glRenderer.localClippingEnabled = true;
 
         sharedScene.background = null;
 
-        // ── 2) Camera: A single object instance ─────────────────────────────
         const aspect = container.clientWidth / container.clientHeight || 1;
         const frustumSize = 10;
         const threeCamera = new THREE.OrthographicCamera(
@@ -189,12 +193,10 @@ export default function Scene({
             );
         }
 
-        // ── 3) VTK Renderer ──────────────────────────────────────────────────
         const vtkRenderer = new Renderer({ scene: sharedScene, camera, addDefaultLights });
         vtkRenderer.viewport = [0, 0, 1, 1];
         renderWindow.addRenderer(vtkRenderer);
 
-        // ── 4) SceneController ───────────────────────────────────────────────
         const sceneController = new SceneController(threeCamera, null, sharedScene);
         sceneControllerRef.current = sceneController;
 
@@ -203,8 +205,6 @@ export default function Scene({
             sceneController.showCameraNav = !sceneController.showCameraNav;
         };
 
-        // Similar to vtkRenderWindow's SetMultiSamples API, provides a bridge function
-        // on the controller to record state or handle external queries.
         sceneController.SetMultiSamples = (samples) => {
             console.warn("[SceneController] Changing MultiSamples requires re-initializing the WebGL Context (re-mounting the component).");
         };
@@ -234,7 +234,6 @@ export default function Scene({
             sceneController._applyingLinked = false;
         };
 
-        // ── 5) Adaptive two-level CAD Grid ───────────────────────────────────
         const makeGrid = (divisions, c1, c2, opacity, offset) => {
             const g = new THREE.GridHelper(2000, divisions, c1, c2);
             g.name = GRID_NAME;
@@ -250,7 +249,6 @@ export default function Scene({
         const majorGrid = makeGrid(200, 0x444444, 0x888888, 0.5, 1);
         const minorGrid = makeGrid(2000, 0x999999, 0xcccccc, 0.25, 1.1);
 
-        // ── 6) DOM Overlay: TextBlock ────────────────────────────────────────
         const textBlockContainer = document.createElement("div");
         textBlockRef.current = textBlockContainer;
         const left = triadConfig.position === "bottom-left" ? `${triadConfig.size + padding}px` : `${padding}px`;
@@ -268,7 +266,6 @@ export default function Scene({
         });
         sceneController.textBlock = textBlockController;
 
-        // ── 7) Measurement Ruler ─────────────────────────────────────────────
         const ruler = new MeasurementRuler(sharedScene, threeCamera, {
             color: 0xffffff, targetPixelWidth: 120, tickHeight: 0.08, fontSize: 40,
         });
@@ -278,7 +275,6 @@ export default function Scene({
         const applyRulerLayer = () => ruler.group?.traverse((o) => o.layers.set(viewportIndex));
         applyRulerLayer();
 
-        // ── 8) Overlay actors: Triad + NavigationCube ────────────────────────
         const triad = new OrientationTriadActor(glRenderer, {
             position: triadConfig.position,
             size: triadConfig.size,
@@ -314,7 +310,6 @@ export default function Scene({
             },
         });
 
-        // ── 9) Interactor + InteractorStyleOrbit + Picker ────────────────────
         const interactor = new RenderWindowInteractor();
         renderWindow.setInteractor(interactor);
 
@@ -361,9 +356,10 @@ export default function Scene({
         interactor.initialize();
 
         const pickingController = new AppPickingController(sceneController);
+        // Cấu hình selection mode ban đầu
+        pickingController.selectionMode = selectionMode;
         sceneController.pickingController = pickingController;
 
-        // ── 10) Scalar Bar ───────────────────────────────────────────────────
         const scalarBar = new ScalarBarActor({
             anchor: "BottomRight", range: [0, 1], numberOfColors: 12, precision: 3,
             textColor: "#f0f0f0", showOutline: true, outlineColor: "#ffffff",
@@ -411,7 +407,6 @@ export default function Scene({
             sceneController.PlotContour(showContour);
         };
 
-        // ── 11) Render Loop ──────────────────────────────────────────────────
         const _forward = new THREE.Vector3();
         const _up = new THREE.Vector3();
         const _target = new THREE.Vector3();
@@ -481,7 +476,6 @@ export default function Scene({
         }
         animate();
 
-        // ── 12) Cleanup ──────────────────────────────────────────────────────
         return () => {
             cancelAnimationFrame(rafId);
             resizeObserver.disconnect();

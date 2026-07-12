@@ -19,6 +19,18 @@ import { Picker, ActorHighlighter } from "../threejsVTK";
 
 const GRID_NAME = "system_grid";
 
+// Các chế độ pick tương ứng combobox "Select" trong StatusBar.
+// Lưu ý: Actor hiện chỉ có 1 mesh `surface` pickable (boundaryEdge tắt raycast),
+// nên với mọi mode, Picker vẫn raycast trúng cùng 1 object — điểm khác biệt
+// nằm ở cách PickingController DIỄN GIẢI pickResult (actor / object / pointId / cellId).
+export const SelectionMode = Object.freeze({
+    PART: "Part",        // chọn cả Actor (mặc định, hành vi cũ)
+    SURFACE: "Surface",  // chọn đúng sub-mesh bị trúng (hit.object)
+    POINT: "Point",      // chọn theo pointId (node gần nhất)
+    ELEMENT: "Element",  // chọn theo cellId/faceIndex
+    NODE: "Node",        // alias của Point cho ngữ cảnh FEA (node lưới)
+});
+
 export class PickingController {
     /**
      * @param {Object} sceneController  Phải có { camera, scene, domElement };
@@ -51,6 +63,9 @@ export class PickingController {
         this.selectedActors = new Set();
         /** @type {Object|null} actor được chọn sau cùng (cho getSelectedActor) */
         this._lastSelected = null;
+
+        /** @type {string} chế độ pick hiện tại — xem SelectionMode ở đầu file */
+        this.selectionMode = options.selectionMode ?? SelectionMode.PART;
 
         this._listeners = new Map();
 
@@ -104,9 +119,13 @@ export class PickingController {
         this.hoveredActor = actor;
         if (actor) {
             // actor đang selected thì giữ màu surface select, chỉ nhấn edge hover
-            this.highlighter.apply(actor, "hover", { skipSurface: this._isSelected(actor) });
+            this.highlighter.apply(actor, "hover", {
+                skipSurface: this._isSelected(actor),
+                mode: this.selectionMode,
+                pickResult,
+            });
         }
-        this._emit("hover", actor, pickResult);
+        this._emit("hover", actor, pickResult, this.selectionMode);
     }
 
     // ---------------------------------------------------------- public API
@@ -133,7 +152,9 @@ export class PickingController {
         }
         // Highlight những actor mới vào
         for (const a of next) {
-            if (!this.selectedActors.has(a)) this.highlighter.apply(a, "select");
+            if (!this.selectedActors.has(a)) {
+                this.highlighter.apply(a, "select", { mode: this.selectionMode, pickResult });
+            }
         }
 
         this.selectedActors = next;
@@ -143,11 +164,12 @@ export class PickingController {
         if (this.hoveredActor) {
             this.highlighter.apply(this.hoveredActor, "hover", {
                 skipSurface: this._isSelected(this.hoveredActor),
+                mode: this.selectionMode,
             });
         }
 
-        this._emit("select", this._lastSelected, pickResult);
-        this._emit("selectionchange", [...this.selectedActors]);
+        this._emit("select", this._lastSelected, pickResult, this.selectionMode);
+        this._emit("selectionchange", [...this.selectedActors], this.selectionMode);
         this.sceneController.requestRender?.();
     }
 
@@ -167,6 +189,42 @@ export class PickingController {
     getSelectedActor() { return this._lastSelected; }
     getSelectedActors() { return [...this.selectedActors]; }
     getHoveredActor() { return this.hoveredActor; }
+
+    /**
+     * Đổi chế độ pick (Part / Surface / Point / Element / Node).
+     * Đây là method mà Scene.jsx gọi mỗi khi prop `selectionMode` đổi
+     * (qua combobox "Select" trong StatusBar).
+     *
+     * Đổi mode xong sẽ xoá selection + hover hiện tại, vì ngữ nghĩa của
+     * một actor "đang được chọn" thay đổi giữa các mode (cả Part vs.
+     * một Point/Element cụ thể bên trong nó) nên giữ lại dễ gây hiểu nhầm.
+     *
+     * @param {string} mode  Một giá trị trong SelectionMode.
+     */
+    setSelectionMode(mode) {
+        if (!mode || !Object.values(SelectionMode).includes(mode)) {
+            console.warn(`[PickingController] Unknown selectionMode: ${mode}`);
+            return this;
+        }
+        if (mode === this.selectionMode) return this;
+
+        this.selectionMode = mode;
+
+        // Point/Node pick vào 1 vị trí gần như không có bề rộng -> nới ngưỡng
+        // bắt trúng cho dễ chọn. (Chuẩn bị sẵn cho trường hợp Actor render
+        // thêm THREE.Points trong tương lai; hiện tại Picker vẫn raycast vào
+        // surface mesh nên giá trị này chưa ảnh hưởng trực tiếp.)
+        const isPointMode = mode === SelectionMode.POINT || mode === SelectionMode.NODE;
+        this.picker.setTolerance({ points: isPointMode ? 8 : 1 });
+
+        this._setHover(null);
+        this.clearSelection();
+
+        this._emit("selectionmodechange", this.selectionMode);
+        return this;
+    }
+
+    getSelectionMode() { return this.selectionMode; }
 
     dispose() {
         this._setHover(null);

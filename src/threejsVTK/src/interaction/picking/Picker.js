@@ -1,5 +1,4 @@
-// ThreejsVTK/Picking/Picker.js
-
+// threejsVTK/Picking/Picker.js
 import * as THREE from 'three';
 
 const _ndc = new THREE.Vector2();
@@ -13,17 +12,13 @@ const _vc = new THREE.Vector3();
  * @property {THREE.Object3D} object        Direct ThreeJS sub-mesh intersected by the ray
  * @property {THREE.Vector3}  worldPosition Intersection point in standard world space coordinates
  * @property {number}         distance      Linear absolute distance scalar from camera projection origin
- * @property {number|null}    cellId        Source cell identifier extracted from original source data mapping
- * @property {number|null}    pointId       Nearest topological structural point mapping id matching intersect
+ * @property {number|null}    faceIndex     The index of the intersected face
+ * @property {number|null}    cellId        Source cell identifier mapped from geometry
+ * @property {number|null}    pointId       Nearest physical topological structural point node ID
+ * @property {number|null}    localPointIndex Internal geometry index of the closest vertex
  */
 
 export class Picker {
-    /**
-     * @param {Object}   [options]
-     * @param {Object}   [options.renderer]  Fallback target scene context reference runner
-     * @param {boolean}  [options.recursive] Traversal configuration strategy setting across nested matrices
-     * @param {Function} [options.filter]    Boolean evaluator filter predicate applied to target geometries
-     */
     constructor({ renderer = null, recursive = true, filter = null } = {}) {
         this.renderer = renderer;
         this.raycaster = new THREE.Raycaster();
@@ -36,21 +31,19 @@ export class Picker {
     setRenderer(renderer) { this.renderer = renderer; return this; }
     setFilter(filter)     { this.filter = filter;     return this; }
 
-    /** Customizes evaluation proximity tolerance properties for discrete component entities. */
     setTolerance({ points, line } = {}) {
         if (points != null) this.raycaster.params.Points.threshold = points;
         if (line != null) this.raycaster.params.Line.threshold = line;
         return this;
     }
 
-    /** Picks based on standard normalized device space coordinates. */
     pick(ndcX, ndcY, renderer = this.renderer, targets = null) {
         if (!renderer) throw new Error('Picker: renderer is required');
 
         _ndc.set(ndcX, ndcY);
         this.raycaster.setFromCamera(_ndc, renderer.camera);
 
-        const list = targets ?? this._defaultTargets(renderer);
+        const list = targets ?? (renderer.getProps?.() || [renderer.scene]);
         const hits = this.raycaster.intersectObjects(list, this.recursive);
         const hit = hits.find((h) => this._accept(h.object));
 
@@ -59,40 +52,27 @@ export class Picker {
             return null;
         }
 
-        const vertexIndex = this._nearestVertexIndex(hit);
+        const localPointIndex = this._nearestVertexIndex(hit);
+        
         this.lastResult = {
             actor: this._resolveActor(hit.object, renderer),
             object: hit.object,
             worldPosition: hit.point.clone(),
             distance: hit.distance,
+            faceIndex: hit.faceIndex ?? null,
             cellId: this._cellId(hit.object, hit.faceIndex),
-            pointId: this._pointId(hit.object, vertexIndex),
+            pointId: this._pointId(hit.object, localPointIndex),
+            localPointIndex: localPointIndex
         };
         return this.lastResult;
     }
 
-    /** Automatically transforms client pointer coordinates into standardized camera viewport NDC space. */
     pickFromClient(clientX, clientY, renderer = this.renderer, targets = null) {
-        if (!renderer?.domElement) throw new Error('Picker: renderer.domElement is required for pickFromClient');
+        if (!renderer?.domElement) throw new Error('Picker: renderer.domElement is required');
         const rect = renderer.domElement.getBoundingClientRect();
         const x = ((clientX - rect.left) / rect.width) * 2 - 1;
         const y = -((clientY - rect.top) / rect.height) * 2 + 1;
         return this.pick(x, y, renderer, targets);
-    }
-
-    /** Evaluates picking using raw VTK normalized screen layout constraints ([0,1], bottom-left origin). */
-    pickNormalized(nx, ny, renderer = this.renderer, targets = null) {
-        return this.pick(nx * 2 - 1, ny * 2 - 1, renderer, targets);
-    }
-
-    getActor()        { return this.lastResult?.actor ?? null; }
-    getPickPosition() { return this.lastResult?.worldPosition ?? null; }
-    getCellId()       { return this.lastResult?.cellId ?? null; }
-    getPointId()      { return this.lastResult?.pointId ?? null; }
-
-    _defaultTargets(renderer) {
-        const props = renderer.getProps?.();
-        return props?.length ? props : [renderer.scene];
     }
 
     _accept(obj) {
@@ -103,10 +83,6 @@ export class Picker {
     }
 
     _resolveActor(object, renderer) {
-        if (typeof renderer.getActorForObject === 'function') {
-            const actor = renderer.getActorForObject(object);
-            if (actor) return actor;
-        }
         for (let cur = object; cur; cur = cur.parent) {
             if (cur.isActor) return cur;
         }
