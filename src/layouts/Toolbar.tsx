@@ -380,8 +380,80 @@ export default function Toolbar({
     };
 
     const handleSetView = (viewName: string): void => {
-        if (!sceneController || typeof sceneController.setView !== "function") return;
-        sceneController.setView(viewName);
+        if (!sceneController) return;
+
+        // Extract the camera instance from the sceneController
+        const cadCam = (sceneController as any).cadCamera;
+        if (!cadCam || !cadCam.three) return;
+
+        const cam = cadCam.three;
+        const target = new THREE.Vector3(0, 0, 0);
+        const distance = cam.position.distanceTo(target) || 15;
+
+        let newPos = new THREE.Vector3();
+        let newUp = new THREE.Vector3(0, 1, 0); // Default Up along +Y
+
+        // Normalize viewName strings to handle lowercase routing cleanly from the ribbon buttons
+        const viewKey = viewName.toLowerCase();
+
+        switch (viewKey) {
+            case "front":
+                newPos.set(0, 0, distance);
+                newUp.set(0, 1, 0);
+                break;
+            case "back":
+                newPos.set(0, 0, -distance);
+                newUp.set(0, 1, 0);
+                break;
+            case "top":
+                newPos.set(0, distance, 0);
+                newUp.set(0, 0, -1); // Looking down from +Y means -Z becomes viewport "Up"
+                break;
+            case "bottom":
+                newPos.set(0, -distance, 0);
+                newUp.set(0, 0, 1);  // Looking up from -Y means +Z becomes viewport "Up"
+                break;
+            case "left":
+                newPos.set(-distance, 0, 0);
+                newUp.set(0, 1, 0);
+                break;
+            case "right":
+                newPos.set(distance, 0, 0);
+                newUp.set(0, 1, 0);
+                break;
+            case "iso":
+            case "isometric":
+                const iso = distance / Math.sqrt(3);
+                newPos.set(iso, iso, iso);
+                newUp.set(-1, 2, -1).normalize(); // Mathematically consistent for true FEA isometric projection
+                break;
+            default:
+                return;
+        }
+
+        // Apply spatial transformations safely matching Scene.jsx perfectly
+        cam.position.copy(newPos);
+        cam.up.copy(newUp);
+        cam.lookAt(target);
+        cam.updateMatrixWorld(true);
+
+        // Synchronize the threejsVTK Camera wrapper facade state core
+        if (typeof cadCam.setFromThree === "function") {
+            cadCam.setFromThree();
+        }
+
+        // Fire clipping pipeline passes and fit camera frustum to bounding elements immediately
+        if (typeof sceneController.updateClipping === "function") {
+            sceneController.updateClipping();
+        }
+        if (typeof sceneController.fitView === "function") {
+            sceneController.fitView();
+        }
+        if (typeof sceneController.requestRender === "function") {
+            sceneController.requestRender();
+        }
+
+        onSceneChanged?.();
     };
 
     const handleResetView = (): void => {
@@ -467,7 +539,12 @@ export default function Toolbar({
 
     return (
         <div className="ribbon-toolbar" style={{ background: toolbarBg, borderBottom: borderStyle, color: textColor, transition: "all 0.15s ease" }}>
-            <input type="file" ref={fileInputRef} style={{ display: "none" }} accept=".vtk,.vtp" onChange={handleFileChange} />
+            <input  type="file" 
+                    ref={fileInputRef}
+                    style={{ display: "none" }} 
+                    accept=".vtk,.vtp" 
+                    onChange={handleFileChange} 
+                />
 
             {/* Ribbon Interface Header Tab Switchers */}
             <div className="ribbon-tabs" style={{ display: "flex", gap: "2px", padding: "4px 4px 0 4px" }}>
@@ -531,6 +608,23 @@ export default function Toolbar({
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>File & Reset</div>
                         </div>
+
+                        {/* Result Category Group (Moved from View tab) */}
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                                <RibbonButton 
+                                    icon="L-contour-3d" 
+                                    label="Contour" 
+                                    textColor={textColor} 
+                                    active={showContour} 
+                                    activeBtnBg={activeBtnBg} 
+                                    onClick={handleToggleContour}
+                                    instruction="Render post-processing continuous isoline color map gradients derived from calculated node arrays."
+                                />
+                            </div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Result</div>
+                        </div>
+
                         <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
                             <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
                                 <RibbonButton 
@@ -679,10 +773,6 @@ export default function Toolbar({
                                 <RibbonButton 
                                     icon="notes" label="Notes" textColor={textColor} active={showTextBlock} activeBtnBg={activeBtnBg} onClick={onToggleTextBlock}
                                     instruction="Display on-screen presentation text fields editor block for context tracking documentation."
-                                />
-                                <RibbonButton 
-                                    icon="L-contour-3d" label="Contour" textColor={textColor} active={showContour} activeBtnBg={activeBtnBg} onClick={handleToggleContour}
-                                    instruction="Render post-processing continuous isoline color map gradients derived from calculated node arrays."
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Display Toggles</div>

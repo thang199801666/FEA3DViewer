@@ -152,9 +152,6 @@ export { FieldData as AttributeSet };
 
 
 
-
-
-
 // // Core/FieldData.js
 
 // export class DataArray {
@@ -177,7 +174,10 @@ export { FieldData as AttributeSet };
 
 //     setComponent(tupleIdx, comp, v) {
 //         this.values[tupleIdx * this.numberOfComponents + comp] = v;
-//         this._rangeCache.clear();
+//         // Only this component's range and the magnitude range (-1) can have
+//         // changed; other cached per-component ranges are still valid.
+//         this._rangeCache.delete(comp);
+//         this._rangeCache.delete(-1);
 //     }
 
 //     getMagnitude(tupleIdx) {

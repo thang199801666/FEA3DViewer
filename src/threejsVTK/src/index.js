@@ -68,7 +68,7 @@ export { makeHatchMaterial } from "./rendering/materials/HatchMaterial.js";
 // ── camera ──────────────────────────────────────────────────────────────────
 // LƯU Ý: camera/Camera.js hiện là PLACEHOLDER. Chép Rendering/Camera.js của bạn đè lên.
 export { Camera } from "./camera/Camera.js";
-export { applyVTKCameraApi, missingCameraApi, VTK_CAMERA_API } from "./camera/vtkCameraApi.js";
+export { applyVTKCameraApi, VTK_CAMERA_API } from "./camera/vtkCameraApi.js";
 export { CameraState } from "./camera/CameraState.js";
 export { CameraMath } from "./camera/CameraMath.js";
 export { CameraAnimation } from "./camera/CameraAnimation.js";

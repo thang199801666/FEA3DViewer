@@ -8,8 +8,8 @@ export const DEFAULT_SETTINGS = {
 
     // --- Scene / Graphics ---
     isGradientBackground: true,    // gradient background vs. solid color
-    topColor: "#ffffff",           // gradient top color
-    bottomColor: "#000000",        // gradient bottom color / solid color
+    topColor: "#BBC9DB",           // gradient top color
+    bottomColor: "#BBC9DB",        // gradient bottom color / solid color
     antialias: true,               // WebGL antialiasing (applied on reload)
 
     // --- Lighting ---

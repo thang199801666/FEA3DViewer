@@ -36,7 +36,9 @@ export default function MainLayout() {
     const sidebarRef = useRef(null);
     const sceneContainerRef = useRef(null);
     const currentWidthRef = useRef(290);
+    const rightClickStartPosRef = useRef({ x: 0, y: 0 });
 
+    const toolbarFileInputRef = useRef(null);
     const sharedSceneRef = useRef(new THREE.Scene());
 
     // --- Derived values ---
@@ -117,14 +119,31 @@ export default function MainLayout() {
         };
     }, [isDragging, resize, stopResizing]);
 
-    // --- Xử lý Context Menu tùy chỉnh trên Main Scene ---
+    // --- Xử lý tách biệt giữa Kéo Chuột (3D Pan/Rotate) và Click Chuột Phải ---
+    const handleSceneMouseDown = useCallback((e) => {
+        if (e.button === 2) {
+            rightClickStartPosRef.current = { x: e.clientX, y: e.clientY };
+        }
+    }, []);
+
+    const handleSceneMouseUp = useCallback((e) => {
+        if (e.button === 2) {
+            const deltaX = Math.abs(e.clientX - rightClickStartPosRef.current.x);
+            const deltaY = Math.abs(e.clientY - rightClickStartPosRef.current.y);
+
+            // Chỉ kích hoạt Menu khi chênh lệch di chuyển nhỏ hơn 4px (coi như click tĩnh)
+            if (deltaX < 4 && deltaY < 4) {
+                setContextMenu({
+                    isOpen: true,
+                    x: e.clientX,
+                    y: e.clientY
+                });
+            }
+        }
+    }, []);
+
     const handleSceneContextMenu = useCallback((e) => {
-        e.preventDefault(); // Tắt chuột phải mặc định
-        setContextMenu({
-            isOpen: true,
-            x: e.clientX,
-            y: e.clientY
-        });
+        e.preventDefault(); // Luôn luôn chặn menu mặc định của trình duyệt
     }, []);
 
     // Tắt chuột phải trên Sidebar (Model Tree)
@@ -132,15 +151,34 @@ export default function MainLayout() {
         e.preventDefault();
     }, []);
 
-    // --- Đóng context menu & Chặn Ctrl+S ---
     useEffect(() => {
         const closeMenu = () => {
             if (contextMenu.isOpen) setContextMenu((prev) => ({ ...prev, isOpen: false }));
         };
 
         const handleKeyDown = (e) => {
-            // Kiểm tra phím tắt Ctrl+S (Windows/Linux) hoặc Cmd+S (macOS)
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+            const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+            const key = e.key.toLowerCase();
+
+            if (isCtrlOrCmd && key === "o") {
+                e.preventDefault();
+                if (toolbarFileInputRef.current) {
+                    toolbarFileInputRef.current.click();
+                }
+            }
+
+            if (e.key === "Escape") {
+                e.preventDefault();
+                if (sceneController1) {
+                    if (typeof sceneController1.resetView === "function") {
+                        sceneController1.resetView();
+                    } else if (typeof sceneController1.resetCamera === "function") {
+                        sceneController1.resetCamera();
+                    }
+                }
+            }
+
+            if (isCtrlOrCmd && key === "s") {
                 e.preventDefault();
                 console.log("Ctrl+S shortcut disabled.");
             }
@@ -153,7 +191,7 @@ export default function MainLayout() {
             window.removeEventListener("click", closeMenu);
             window.removeEventListener("keydown", handleKeyDown);
         };
-    }, [contextMenu.isOpen]);
+    }, [contextMenu.isOpen, sceneController1]);
 
     return (
         <div
@@ -176,6 +214,7 @@ export default function MainLayout() {
                 theme={settings.theme}
                 sceneController={sceneController1}
                 onSceneChanged={triggerSceneUpdate}
+                fileInputRef={toolbarFileInputRef}
                 isSplit={settings.isSplit}
                 onToggleSplit={() => toggleSetting("isSplit")}
                 isViewLinked={settings.isViewLinked}
@@ -201,7 +240,7 @@ export default function MainLayout() {
                     backgroundColor: isDark ? "#181818" : "#f0f0f0",
                 }}
             >
-                {/* SIDEBAR - Đã chặn chuột phải */}
+                {/* SIDEBAR */}
                 <aside
                     ref={sidebarRef}
                     onContextMenu={handleSidebarContextMenu}
@@ -278,10 +317,12 @@ export default function MainLayout() {
                     </div>
                 </div>
 
-                {/* MAIN SCENE CONTAINER - Đã kích hoạt Custom Context Menu & Chặn chuột phải gốc */}
+                {/* MAIN SCENE CONTAINER */}
                 <main
                     ref={sceneContainerRef}
                     onContextMenu={handleSceneContextMenu}
+                    onMouseDown={handleSceneMouseDown}
+                    onMouseUp={handleSceneMouseUp}
                     style={{
                         width: `calc(100% - ${currentWidthRef.current}px)`,
                         height: "100%",
@@ -421,7 +462,7 @@ export default function MainLayout() {
                 onSettingsChange={setSettings}
             />
 
-            {/* --- CUSTOM CONTEXT MENU UI --- */}
+            {/* CUSTOM CONTEXT MENU UI */}
             {contextMenu.isOpen && (
                 <div
                     style={{

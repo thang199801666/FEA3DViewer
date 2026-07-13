@@ -75,10 +75,11 @@ export function polyDataFromExtracted(source, geometry) {
 
     const index = geometry.getIndex();
     const triCount = index.count / 3;
-    out.polys = [];
+    const polys = new Array(triCount);
     for (let t = 0; t < triCount; t++) {
-        out.polys.push([index.getX(t * 3), index.getX(t * 3 + 1), index.getX(t * 3 + 2)]);
+        polys[t] = [index.getX(t * 3), index.getX(t * 3 + 1), index.getX(t * 3 + 2)];
     }
+    out.setPolys(polys);
 
     out.pointData = source.pointData.clone();
 
@@ -114,14 +115,17 @@ export function geometryToPolyData(geometry) {
     if (!pos) throw new Error("Geometry is missing 'position' attribute");
     pd.setPoints(pos.array.slice(0, pos.count * 3));
 
+    const polys = [];
     if (geometry.index) {
         const idx = geometry.index.array;
-        for (let i = 0; i + 2 < idx.length; i += 3) pd.polys.push([idx[i], idx[i + 1], idx[i + 2]]);
+        for (let i = 0; i + 2 < idx.length; i += 3) polys.push([idx[i], idx[i + 1], idx[i + 2]]);
     } else {
-        for (let i = 0; i + 2 < pos.count; i += 3) pd.polys.push([i, i + 1, i + 2]);
+        for (let i = 0; i + 2 < pos.count; i += 3) polys.push([i, i + 1, i + 2]);
     }
+    pd.setPolys(polys);
     return pd;
 }
+
 
 
 
@@ -176,31 +180,41 @@ export function geometryToPolyData(geometry) {
 //  */
 // export function polyDataToGeometry(polyData) {
 //     const g = new THREE.BufferGeometry();
-//     g.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(polyData.points), 3));
+//     const points = polyData.points instanceof Float32Array
+//         ? polyData.points
+//         : Float32Array.from(polyData.points);
+//     g.setAttribute("position", new THREE.BufferAttribute(points, 3));
 
-//     const idx = [];
-//     const cellMap = [];
-//     let cellId = 0;
+//     // Size the output up front (VTK-style preallocate-then-fill) instead of
+//     // push-growing a plain array and converting to typed arrays afterward —
+//     // avoids repeated backing-store reallocation for large meshes.
+//     let triCount = 0;
+//     for (const cell of polyData.polys) triCount += Math.max(0, cell.length - 2);
+//     for (const strip of polyData.strips) triCount += Math.max(0, strip.length - 2);
+
+//     const idx = new Uint32Array(triCount * 3);
+//     const cellMap = new Int32Array(triCount);
+//     let w = 0, ci = 0, cellId = 0;
 
 //     for (const cell of polyData.polys) {
 //         for (let i = 1; i + 1 < cell.length; i++) {
-//             idx.push(cell[0], cell[i], cell[i + 1]);
-//             cellMap.push(cellId);
+//             idx[w++] = cell[0]; idx[w++] = cell[i]; idx[w++] = cell[i + 1];
+//             cellMap[ci++] = cellId;
 //         }
 //         cellId++;
 //     }
 
 //     for (const strip of polyData.strips) {
 //         for (let i = 0; i + 2 < strip.length; i++) {
-//             if (i % 2 === 0) idx.push(strip[i], strip[i + 1], strip[i + 2]);
-//             else idx.push(strip[i + 1], strip[i], strip[i + 2]);
-//             cellMap.push(cellId);
+//             if (i % 2 === 0) { idx[w++] = strip[i]; idx[w++] = strip[i + 1]; idx[w++] = strip[i + 2]; }
+//             else { idx[w++] = strip[i + 1]; idx[w++] = strip[i]; idx[w++] = strip[i + 2]; }
+//             cellMap[ci++] = cellId;
 //         }
 //         cellId++;
 //     }
 
-//     g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
-//     g.userData.cellMap = Int32Array.from(cellMap);
+//     g.setIndex(new THREE.BufferAttribute(idx, 1));
+//     g.userData.cellMap = cellMap;
 //     return g;
 // }
 
@@ -252,7 +266,7 @@ export function geometryToPolyData(geometry) {
 //     const pd = new PolyData();
 //     const pos = geometry.getAttribute("position");
 //     if (!pos) throw new Error("Geometry is missing 'position' attribute");
-//     pd.setPoints(new Float32Array(pos.array.slice(0, pos.count * 3)));
+//     pd.setPoints(pos.array.slice(0, pos.count * 3));
 
 //     if (geometry.index) {
 //         const idx = geometry.index.array;

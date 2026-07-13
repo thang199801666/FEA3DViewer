@@ -2,167 +2,165 @@ import * as THREE from "three";
 
 export class MeasurementRulerActor {
   /**
-   * @param {THREE.Scene} scene - The scene where the ruler graphics will be added.
-   * @param {THREE.OrthographicCamera} camera - The main camera used to monitor zoom and scale.
+   * @param {THREE.WebGLRenderer} renderer - The main WebGL renderer.
    * @param {object} options - Configuration options for customization.
    */
-  constructor(scene, camera, options = {}) {
-    this.scene = scene;
-    this.camera = camera;
+  constructor(renderer, options = {}) {
+    this.renderer = renderer;
 
     // Configuration options
-    this.color = options.color ?? 0xffffff; // Default color is white
+    this.color = options.color ?? 0xffffff; 
     this.targetPixelWidth = options.targetPixelWidth ?? 120;
-    this.tickHeight = options.tickHeight ?? 0.05; 
     
-    // Increase the base canvas font size to render high-resolution text and avoid blurriness
+    // High-resolution canvas base font size to prevent blurriness
     this.fontSize = options.fontSize ?? 90; 
 
-    // Create a group to hold all ruler graphic components
-    this.group = new THREE.Group();
-    this.scene.add(this.group);
+    // Isolated overlay scene and static 2D camera mapping to screen pixels
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+    this.camera.position.set(0, 0, 5);
+    this.camera.lookAt(0, 0, 0);
 
-    // Initialize geometry components placeholder
+    // Initialize line components
     this.lineGeometry = new THREE.BufferGeometry();
-    
-    // Create white material, disable depth test/write so the ruler always renders on top of 3D models
     this.lineMaterial = new THREE.LineBasicMaterial({ 
       color: this.color, 
       depthTest: false, 
       depthWrite: false
     });
     
-    // Use LineSegments to stack lines, simulating pixel thickness for the ruler
     this.rulerLine = new THREE.LineSegments(this.lineGeometry, this.lineMaterial);
-    this.rulerLine.renderOrder = 10;
-    this.group.add(this.rulerLine);
+    this.scene.add(this.rulerLine);
 
-    this.position = new THREE.Vector3(0, 0, 0);
     this._lastLabelText = null;
     this.labelSprite = null;
   }
 
   /**
-   * Updates the ruler graphics geometry and texture based on the camera's current scale.
+   * Updates the layout using exact screen pixel spaces
    */
-  update(containerWidth) {
-    if (!this.camera || !containerWidth || containerWidth === 0) return;
+  update(containerWidth, containerHeight, mainCamera) {
+    if (!mainCamera || !containerWidth || !containerHeight) return;
 
-    // 1. Calculate pixel-to-world units ratio
-    const totalWorldWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
+    // 1. Update overlay projection matching the 1:1 screen pixels
+    const halfWidth = containerWidth / 2;
+    const halfHeight = containerHeight / 2;
+    this.camera.left = -halfWidth;
+    this.camera.right = halfWidth;
+    this.camera.top = halfHeight;
+    this.camera.bottom = -halfHeight;
+    this.camera.updateProjectionMatrix();
+
+    // 2. Map pixel spacing to main camera zoom scale
+    const totalWorldWidth = (mainCamera.right - mainCamera.left) / mainCamera.zoom;
     const unitsPerPixel = totalWorldWidth / containerWidth;
 
     const targetWorldUnits = this.targetPixelWidth * unitsPerPixel;
     const niceWorldUnits = this._getNiceNumber(targetWorldUnits);
 
-    const halfW = niceWorldUnits / 2;
+    const halfWInPixels = (niceWorldUnits / unitsPerPixel) / 2;
+    
+    // STABLE SIZES: Exact fixed screen pixel definitions
+    const staticTickHeight = 8; // Vertical ticks stay exactly 8 pixels tall
+    const thickness = 0.5;      // Pixel width line thickness stack
+    
+    // --- CHANGED: Pushed slightly lower toward the bottom edge ---
+    const bottomMargin = 15;    
 
-    // Height of the vertical ticks (fixed 7 pixels on screen)
-    const desiredTickPixelHeight = 7; 
-    const dynamicTickHeight = desiredTickPixelHeight * unitsPerPixel; 
+    const centerY = -halfHeight + bottomMargin; 
 
-    // Desired thickness for the ruler line (fixed 2.5 pixels on screen)
-    const thickness = 2.5 * unitsPerPixel;
-
-    // ----------------------------------------------------------------
-    // Draw parallel double lines offset by `thickness` to simulate line weight
-    // ----------------------------------------------------------------
+    // Generate line positions directly using stable screen pixel values
     const vertices = new Float32Array([
-      // --- Main base lines ---
-      -halfW,  dynamicTickHeight, 0,   
-      -halfW,  0,                 0,
-      -halfW,  0,                 0,   
-       halfW,  0,                 0,
-       halfW,  0,                 0,   
-       halfW,  dynamicTickHeight, 0,
+      // Main tick and baseline structure
+      -halfWInPixels,             centerY + staticTickHeight, 0,   
+      -halfWInPixels,             centerY,                    0,
+      -halfWInPixels,             centerY,                    0,   
+       halfWInPixels,             centerY,                    0,
+       halfWInPixels,             centerY,                    0,   
+       halfWInPixels,             centerY + staticTickHeight, 0,
 
-      // --- Supplementary lines stacked along the Y axis for thickness ---
-      -halfW + thickness,  dynamicTickHeight, 0,
-      -halfW + thickness,  thickness,                 0,
-      -halfW,  thickness,                 0,
-       halfW,  thickness,                 0,
-       halfW - thickness,  thickness,                 0,
-       halfW - thickness,  dynamicTickHeight, 0,
+      // Thickness offsets
+      -halfWInPixels + thickness, centerY + staticTickHeight, 0,
+      -halfWInPixels + thickness, centerY + thickness,         0,
+      -halfWInPixels,             centerY + thickness,         0,
+       halfWInPixels,             centerY + thickness,         0,
+       halfWInPixels - thickness, centerY + thickness,         0,
+       halfWInPixels - thickness, centerY + staticTickHeight, 0,
     ]);
 
     this.lineGeometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
     this.lineGeometry.computeBoundingSphere();
 
-    // Format display string for the number
+    // Text label matching old precision layout
     const labelText = niceWorldUnits >= 1 
       ? `${Number(niceWorldUnits.toFixed(2))}` 
       : `${Number(niceWorldUnits.toFixed(5))}`;
 
-    // Recreate text sprite only if the text content changes
     if (this._lastLabelText !== labelText) {
       this._lastLabelText = labelText;
 
       if (this.labelSprite) {
-        this.group.remove(this.labelSprite);
+        this.scene.remove(this.labelSprite);
         if (this.labelSprite.material.map) this.labelSprite.material.map.dispose();
         this.labelSprite.material.dispose();
       }
 
       this.labelSprite = this._makeTextSprite(labelText);
-      this.group.add(this.labelSprite);
+      this.scene.add(this.labelSprite);
     }
 
-    // Assign anchor node position
-    this.group.position.copy(this.position);
-    
     if (this.labelSprite) {
-      const currentZoom = this.camera.zoom || 1;
-
-      // ----------------------------------------------------------------
-      // Adjust text sprite scale for clear visibility on screen
-      // ----------------------------------------------------------------
-      const baseSpriteWidth = 1.1; 
-      const baseSpriteHeight = 0.55;
-
-      this.labelSprite.scale.set(
-        baseSpriteWidth / currentZoom, 
-        baseSpriteHeight / currentZoom, 
-        1
-      );
-
-      // ----------------------------------------------------------------
-      // CHANGED: Reduced from 24 to 13 to bring the text closer to the ruler
-      // ----------------------------------------------------------------
-      const desiredLabelPixelOffset = 13; 
-      const dynamicLabelY = desiredLabelPixelOffset * unitsPerPixel;
-
-      this.labelSprite.position.set(0, dynamicLabelY, 0);
+      this.labelSprite.scale.set(70, 35, 1); 
+      // --- CHANGED: Reduced text offset from line (+12 down to +6) ---
+      this.labelSprite.position.set(0, centerY + staticTickHeight + 6, 0);
     }
   }
 
-  /**
-   * Internal utility to build a canvas-backed transparent text element.
-   */
+  render() {
+    const renderer = this.renderer;
+    const pr = renderer.getPixelRatio();
+    const w = renderer.domElement.clientWidth;
+    const h = renderer.domElement.clientHeight;
+
+    const previousAutoClear = renderer.autoClear;
+    const previousViewport = new THREE.Vector4();
+    renderer.getViewport(previousViewport);
+    const previousScissor = new THREE.Vector4();
+    renderer.getScissor(previousScissor);
+    const previousScissorTest = renderer.getScissorTest();
+
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+    renderer.setScissor(0, 0, w * pr, h * pr);
+    renderer.setViewport(0, 0, w * pr, h * pr);
+    
+    renderer.clearDepth();
+    renderer.render(this.scene, this.camera);
+
+    renderer.setViewport(previousViewport);
+    renderer.setScissor(previousScissor);
+    renderer.setScissorTest(previousScissorTest);
+    renderer.autoClear = previousAutoClear;
+  }
+
   _makeTextSprite(message) {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
+    canvas.width = 512;
+    canvas.height = 256;
 
-    // Large canvas size to ensure sharp pixel density resolution
-    canvas.width = 256;
-    canvas.height = 128;
-
-    // Set font style to bold and large size
-    ctx.font = `bold ${this.fontSize}px monospace`;
+    // --- CHANGED: Added 'bold' keyword ---
+    ctx.font = `bold ${this.fontSize}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    // ----------------------------------------------------------------
-    // TEXT COLORING: Convert ThreeJS color format to standard CSS canvas color string
-    // ----------------------------------------------------------------
-    let colorStr = "#ffffff"; // Default white
+    let colorStr = "#ffffff";
     if (typeof this.color === "number") {
       colorStr = `#${this.color.toString(16).padStart(6, "0")}`;
     } else if (typeof this.color === "string") {
       colorStr = this.color;
     }
     ctx.fillStyle = colorStr;
-    
-    // Draw text at the center of the canvas
     ctx.fillText(message, canvas.width / 2, canvas.height / 2);
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -191,12 +189,12 @@ export class MeasurementRulerActor {
   }
 
   dispose() {
-    this.scene.remove(this.group);
     this.lineGeometry.dispose();
     this.lineMaterial.dispose();
     if (this.labelSprite) {
       if (this.labelSprite.material.map) this.labelSprite.material.map.dispose();
       this.labelSprite.material.dispose();
     }
+    this.scene.clear();
   }
 }

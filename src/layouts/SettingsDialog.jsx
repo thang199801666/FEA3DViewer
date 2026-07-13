@@ -1,4 +1,4 @@
-import DialogTemplate from "./DialogTemplate";
+import DialogTemplate from "./DialogTemplate.jsx";
 import {
     THEME_OPTIONS,
     NAV_STYLE_OPTIONS,

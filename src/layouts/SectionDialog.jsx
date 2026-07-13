@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import DialogTemplate from "./DialogTemplate";
+import DialogTemplate from "./DialogTemplate.jsx";
 
 const CLIP_AXES = [
     { key: "x", label: "X", index: 0, color: 0xff5252 },
