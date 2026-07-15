@@ -164,13 +164,43 @@ export default class SceneController {
     return box;
   }
 
+  /** World AABB of geometry belonging to actors that are currently rendered. */
+  _calculateVisibleActorBounds() {
+    const box = new THREE.Box3();
+    if (!this.scene) return box;
+    this.scene.updateMatrixWorld(true);
+
+    const actorIsVisible = (actor) => {
+      for (let node = actor; node; node = node.parent) {
+        if (!node.visible) return false;
+      }
+      return true;
+    };
+
+    this.scene.traverse((actor) => {
+      if (!actor.isActor || !actorIsVisible(actor)) return;
+      actor.traverseVisible((object) => {
+        if (!(object.isMesh || object.isLine || object.isLineSegments || object.isPoints)) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (materials.length && materials.every((material) => material && material.visible === false)) return;
+        const geometry = object.geometry;
+        if (!geometry?.getAttribute?.("position")) return;
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        if (!geometry.boundingBox?.isEmpty()) {
+          box.union(geometry.boundingBox.clone().applyMatrix4(object.matrixWorld));
+        }
+      });
+    });
+    return box;
+  }
+
   /** * Triggers a Zoom Fit action while preserving the active viewport viewing angle.
    */
-  fitView(padding = 1.2) {
+  fitView(marginPx = 25) {
     if (!this.vtkCamera || !this.scene) return false;
-    const box = this._calculateModelBounds();
+    const box = this._calculateVisibleActorBounds();
     if (box.isEmpty()) return false;
-    this._fitBox(box, padding);
+    this._fitBox(box, marginPx);
     this.updateClipping();
     return true;
   }
@@ -178,14 +208,17 @@ export default class SceneController {
   /**
    * Core logic to project, bound, and recalculate ortho view frustums against a targets BoundingBox.
    */
-  _fitBox(box, padding = 1.2) {
+  _fitBox(box, marginPx = 25) {
     const cam = this.camera;
+    if (!cam || !box || box.isEmpty()) return false;
+
+    const width = Math.max(this.domElement?.clientWidth || 1, 1);
+    const height = Math.max(this.domElement?.clientHeight || 1, 1);
+    const safeMargin = THREE.MathUtils.clamp(Number(marginPx) || 25, 0, Math.min(width, height) / 2 - 1);
+    const limitX = Math.max(1e-6, 1 - (2 * safeMargin) / width);
+    const limitY = Math.max(1e-6, 1 - (2 * safeMargin) / height);
     const center = box.getCenter(new THREE.Vector3());
-
-    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
-    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
-
-    // Extract half dimensions of the box projection relative to viewport space axes
+    const inverseRotation = cam.quaternion.clone().invert();
     const corners = [];
     for (let i = 0; i < 8; i++) {
       corners.push(
@@ -193,35 +226,47 @@ export default class SceneController {
           i & 1 ? box.max.x : box.min.x,
           i & 2 ? box.max.y : box.min.y,
           i & 4 ? box.max.z : box.min.z
-        )
+        ).sub(center).applyQuaternion(inverseRotation)
       );
     }
-    let halfW = 1e-6,
-      halfH = 1e-6;
-    for (const c of corners) {
-      const d = c.clone().sub(center);
-      halfW = Math.max(halfW, Math.abs(d.dot(right)));
-      halfH = Math.max(halfH, Math.abs(d.dot(up)));
+    let distance = Math.max(this.vtkCamera.getDistance() || 1, 1e-3);
+
+    if (cam.isOrthographicCamera) {
+      let halfX = 1e-9;
+      let halfY = 1e-9;
+      for (const point of corners) {
+        halfX = Math.max(halfX, Math.abs(point.x));
+        halfY = Math.max(halfY, Math.abs(point.y));
+      }
+      const baseHalfW = Math.abs(cam.right - cam.left) / 2;
+      const baseHalfH = Math.abs(cam.top - cam.bottom) / 2;
+      cam.zoom = Math.max(1e-9, Math.min(
+        (baseHalfW * limitX) / halfX,
+        (baseHalfH * limitY) / halfY
+      ));
+    } else if (cam.isPerspectiveCamera) {
+      const tanHalfY = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+      const tanHalfX = tanHalfY * cam.aspect;
+      distance = 1e-3;
+      for (const point of corners) {
+        // depth = distance - point.z. Solve the perspective inequalities
+        // directly for all eight AABB corners and both inset viewport axes.
+        distance = Math.max(
+          distance,
+          point.z + Math.abs(point.x) / Math.max(tanHalfX * limitX, 1e-12),
+          point.z + Math.abs(point.y) / Math.max(tanHalfY * limitY, 1e-12)
+        );
+      }
     }
 
-    const viewHalfW = (cam.right - cam.left) / 2;
-    const viewHalfH = (cam.top - cam.bottom) / 2;
-    const zoom = Math.min(viewHalfW / (halfW * padding), viewHalfH / (halfH * padding));
-
-    // Preserve perspective direction: Reset focal point = center, eye point = center - dir * distance
-    const dir = new THREE.Vector3();
-    cam.getWorldDirection(dir);
-    const radius = box.getBoundingSphere(new THREE.Sphere()).radius || 1;
-    const distance = Math.max(this.vtkCamera.getDistance() || 0, radius * 4);
-
-    cam.position.copy(center).addScaledVector(dir, -distance);
-    cam.up.copy(up);
-    cam.zoom = Number.isFinite(zoom) && zoom > 0 ? zoom : cam.zoom;
+    const eyeOffset = new THREE.Vector3(0, 0, distance).applyQuaternion(cam.quaternion);
+    cam.position.copy(center).add(eyeOffset);
     cam.lookAt(center);
     cam.updateProjectionMatrix();
     this.vtkCamera.setFromThree();
 
     this.requestRender();
+    return true;
   }
 
   /** * Snaps the camera posture to standard CAD projection orientations, then recalculates bounds.
@@ -278,12 +323,29 @@ export default class SceneController {
     if (box.isEmpty()) return;
 
     const sphere = box.getBoundingSphere(new THREE.Sphere());
-    const currentZoom = this.camera?.zoom || 1;
-    const baseGridSize = 2000;
-    const dynamicRadius = Math.max(sphere.radius * 3.0, baseGridSize / currentZoom);
+    const dynamicRadius = Math.max(sphere.radius * 3.0, 1);
+    const viewDirection = new THREE.Vector3();
+    this.camera.getWorldDirection(viewDirection).normalize();
+    const depthToCenter = sphere.center.clone()
+      .sub(this.camera.position)
+      .dot(viewDirection);
+    const nearDepth = depthToCenter - dynamicRadius;
+    const farDepth = depthToCenter + dynamicRadius;
 
-    // Orthographic configurations push near clipping values negatively to prevent clipping cross-sections (Standard CAD style).
-    // Bound directly into vtkCamera to protect variables from being overwriting in standard rendering loops.
-    this.vtkCamera.setClippingRange(-dynamicRadius, dynamicRadius * 2);
+    // Clipping planes are camera-space depths, not offsets around zero. Using
+    // the focal distance here could clip components whose bounds are not
+    // centered exactly at the focal point, especially in orthographic mode.
+    if (this.camera?.isPerspectiveCamera) {
+      const safeNear = Math.max(1e-3, nearDepth);
+      this.vtkCamera.setClippingRange(
+        safeNear,
+        Math.max(farDepth, safeNear + Math.max(dynamicRadius, 1))
+      );
+    } else {
+      this.vtkCamera.setClippingRange(
+        nearDepth,
+        Math.max(farDepth, nearDepth + Math.max(dynamicRadius, 1))
+      );
+    }
   }
 }

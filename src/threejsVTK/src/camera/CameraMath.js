@@ -73,24 +73,27 @@ export const CameraMath = {
         camera.updateProjectionMatrix();
       }
     } else if (camera.isPerspectiveCamera) {
+      const currentDist = Math.max(state.eye.distanceTo(state.target), 1e-6);
+      const newDist = THREE.MathUtils.clamp(currentDist / factor, 1e-3, 1e9);
+
       if (cursorNDC) {
-        // Perspective camera zoom-to-cursor path.
-        const mousePoint = new THREE.Vector3(cursorNDC.x, cursorNDC.y, 0.5).unproject(camera);
-        const rayDir = new THREE.Vector3().subVectors(mousePoint, state.eye).normalize();
-        
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(state.quaternion);
-        const currentDist = new THREE.Vector3().subVectors(state.eye, state.target).dot(forward);
-        const newDist = THREE.MathUtils.clamp(currentDist / factor, 1e-3, 1e6);
-        
-        const targetMoveFactor = currentDist - newDist;
-        state.eye.addScaledVector(rayDir, targetMoveFactor);
-        state.target.addScaledVector(rayDir, targetMoveFactor);
-        state.distance = newDist;
-      } else {
-        // Centered dolly.
-        state.distance = THREE.MathUtils.clamp(state.distance * (1 / factor), 1e-3, 1e6);
-        this.applyQuaternionToEye(state);
+        // Anchor the point on the focal plane under the cursor.  Both offsets
+        // are analytic, avoiding unproject/clipping dependence and the old
+        // sign error that collapsed distance to 0.001 and sent the model away.
+        const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(state.quaternion);
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(state.quaternion);
+        const oldOffset = new THREE.Vector3()
+          .addScaledVector(right, cursorNDC.x * currentDist * tanHalfFov * camera.aspect)
+          .addScaledVector(up, cursorNDC.y * currentDist * tanHalfFov);
+        const newOffset = new THREE.Vector3()
+          .addScaledVector(right, cursorNDC.x * newDist * tanHalfFov * camera.aspect)
+          .addScaledVector(up, cursorNDC.y * newDist * tanHalfFov);
+        state.target.add(oldOffset.sub(newOffset));
       }
+
+      state.distance = newDist;
+      this.applyQuaternionToEye(state);
     }
   },
 

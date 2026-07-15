@@ -7,6 +7,7 @@ import { ActorTopology } from "../picking/ActorTopology.js";
 
 const _dir = new THREE.Vector3();
 const _off = new THREE.Matrix4();
+const _point = new THREE.Vector3();
 
 let _dotTexture = null;
 function dotTexture() {
@@ -42,7 +43,6 @@ export class SelectionHighlighter {
         this._hover = null;
         this._hoverKey = null;
         this._selection = new Map();
-        this._partWireframes = new Map();
     }
 
     setHover(result) {
@@ -59,7 +59,6 @@ export class SelectionHighlighter {
             const selected = this._selection.get(this._hoverKey);
             if (selected) selected.visible = false;
         }
-        this._syncPartWireframes();
     }
 
     /** Replaces the entire current selection with new picked results. */
@@ -72,7 +71,6 @@ export class SelectionHighlighter {
         }
         const hoveredSelection = this._hoverKey ? this._selection.get(this._hoverKey) : null;
         if (hoveredSelection) hoveredSelection.visible = false;
-        this._syncPartWireframes();
     }
 
     toggle(result) {
@@ -86,7 +84,6 @@ export class SelectionHighlighter {
                 if (result.key === this._hoverKey) o.visible = false;
             }
         }
-        this._syncPartWireframes();
     }
 
     has(key) { return this._selection.has(key); }
@@ -96,7 +93,6 @@ export class SelectionHighlighter {
         this.setHover(null);
         for (const o of this._selection.values()) this._destroy(o);
         this._selection.clear();
-        this._syncPartWireframes();
     }
 
     dispose() { this.clear(); }
@@ -114,18 +110,12 @@ export class SelectionHighlighter {
         switch (mode) {
             case PickMode.PART: {
                 obj = new THREE.Group();
-                const face = this._meshFromTriangles(actor, topo, null, color, false);
-                if (face) {
-                    face.renderOrder = 2;
-                    obj.add(face);
-                }
                 const baseThickness = actor._featureEdgeMaterial?.linewidth
                     ?? actor._baseEdgeThickness
                     ?? 1.0;
-                const outline = this._lineSegments(
+                const outline = this._actorBoundaryEdges(
                     actor,
                     topo,
-                    topo.partOutlinePositions,
                     color,
                     baseThickness * (isHover ? 1.75 : 1.35)
                 );
@@ -144,17 +134,27 @@ export class SelectionHighlighter {
                 break;
             }
             case PickMode.ELEMENT: {
-                const rawTris = topo.rawTrianglesOfCell(id);
-                const tris = rawTris ? null : topo.trianglesOfCell(id);
+                const element = topo.elementOfCell?.(id);
+                const rawTris = element?.triangles?.length ? element.triangles : null;
+                const tris = element ? null : topo.trianglesOfCell(id);
                 obj = new THREE.Group();
                 const face = rawTris
                     ? this._meshFromRawTriangles(actor, topo, rawTris, color)
+                    : element
+                    ? null
                     : this._meshFromTriangles(actor, topo, tris, color, false);
                 if (face) obj.add(face);
-                const wire = rawTris
+                const wire = element?.edges?.length
+                    ? this._rawElementEdges(actor, topo, element.edges, color, isHover)
+                    : rawTris
                     ? this._rawTriangleOutline(actor, topo, rawTris, color)
                     : this._cellOutline(actor, topo, tris, color);
                 if (wire) obj.add(wire);
+                if (element && !element.triangles.length && element.points.length) {
+                    const points = element.points.map((raw) => this._sourcePoint(actor, raw, new THREE.Vector3()));
+                    const nodes = this._pointSprite(actor, topo, points, color, isHover, false);
+                    if (nodes) obj.add(nodes);
+                }
                 actor.add(obj);
                 break;
             }
@@ -180,39 +180,6 @@ export class SelectionHighlighter {
             obj.userData.__highlightActor = actor;
         }
         return obj;
-    }
-
-    /**
-     * Part highlight intentionally shows only the final geometric boundary.
-     * Hiding the actor's mesh overlay prevents its coplanar subdivisions and
-     * triangle diagonals from being tinted by the translucent additive face.
-     */
-    _syncPartWireframes() {
-        const activeActors = new Set();
-        const collect = (obj) => {
-            if (obj?.userData.__highlightMode === PickMode.PART) {
-                activeActors.add(obj.userData.__highlightActor);
-            }
-        };
-        for (const obj of this._selection.values()) collect(obj);
-        collect(this._hover);
-
-        for (const actor of activeActors) {
-            const overlay = actor?._wireframeOverlay;
-            if (!overlay) continue;
-            const saved = this._partWireframes.get(actor);
-            if (!saved || saved.overlay !== overlay) {
-                if (saved?.overlay) saved.overlay.visible = saved.visible;
-                this._partWireframes.set(actor, { overlay, visible: overlay.visible });
-            }
-            overlay.visible = false;
-        }
-
-        for (const [actor, saved] of this._partWireframes) {
-            if (activeActors.has(actor)) continue;
-            saved.overlay.visible = saved.visible;
-            this._partWireframes.delete(actor);
-        }
     }
 
     _meshFromTriangles(actor, topo, tris, color, autoAdd = true) {
@@ -256,13 +223,12 @@ export class SelectionHighlighter {
     }
 
     _meshFromRawTriangles(actor, topo, rawTris, color) {
-        const pos = actor.surface.geometry.getAttribute("position");
         const out = new Float32Array(rawTris.length * 3);
         for (let i = 0; i < rawTris.length; i++) {
-            const vi = rawTris[i];
-            out[i * 3] = pos.getX(vi);
-            out[i * 3 + 1] = pos.getY(vi);
-            out[i * 3 + 2] = pos.getZ(vi);
+            const p = this._sourcePoint(actor, rawTris[i], _point);
+            out[i * 3] = p.x;
+            out[i * 3 + 1] = p.y;
+            out[i * 3 + 2] = p.z;
         }
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(out, 3));
@@ -341,6 +307,27 @@ export class SelectionHighlighter {
         return this._lineSegments(actor, topo, pts, color, 3);
     }
 
+    _rawElementEdges(actor, topo, edges, color, isHover) {
+        const pts = [];
+        for (const chain of edges) {
+            for (let i = 0; i + 1 < chain.length; i++) {
+                for (const raw of [chain[i], chain[i + 1]]) {
+                    const p = this._sourcePoint(actor, raw, _point);
+                    pts.push(p.x, p.y, p.z);
+                }
+            }
+        }
+        return this._lineSegments(actor, topo, pts, color, isHover ? 3 : 4);
+    }
+
+    _sourcePoint(actor, pointId, target) {
+        const points = actor.mapper?.input?.points;
+        if (points && pointId * 3 + 2 < points.length) {
+            return target.fromArray(points, pointId * 3);
+        }
+        return target.fromBufferAttribute(actor.surface.geometry.getAttribute("position"), pointId);
+    }
+
     _chainLine(actor, topo, chain, color, isHover) {
         if (!chain) return null;
         const pts = [];
@@ -388,7 +375,40 @@ export class SelectionHighlighter {
         return line;
     }
 
-    _pointSprite(actor, topo, positions, color, isHover) {
+    /** Reuses the actor's already filtered boundary/feature-edge geometry. */
+    _actorBoundaryEdges(actor, topo, color, width) {
+        const source = actor.boundaryEdge?.geometry;
+        if (!source) {
+            return this._lineSegments(actor, topo, topo.partOutlinePositions, color, width);
+        }
+
+        const geom = source.clone();
+        const mat = new LineMaterial({
+            color: new THREE.Color(color).getHex(),
+            linewidth: width,
+            worldUnits: false,
+            depthTest: false,
+            depthWrite: false,
+            transparent: true,
+            opacity: 1,
+            toneMapped: false
+        });
+        const line = new LineSegments2(geom, mat);
+        line.computeLineDistances();
+        line.raycast = () => {};
+        line.renderOrder = 1000;
+        line.frustumCulled = false;
+        line.onBeforeRender = (renderer, scene, camera) => {
+            renderer.getSize(mat.resolution);
+            camera.getWorldDirection(_dir);
+            const eps = topo.diag * 5e-4;
+            _off.makeTranslation(-_dir.x * eps, -_dir.y * eps, -_dir.z * eps);
+            line.matrixWorld.premultiply(_off);
+        };
+        return line;
+    }
+
+    _pointSprite(actor, topo, positions, color, isHover, autoAdd = true) {
         const arr = new Float32Array(positions.length * 3);
         positions.forEach((p, i) => { arr[i * 3] = p.x; arr[i * 3 + 1] = p.y; arr[i * 3 + 2] = p.z; });
 
@@ -411,7 +431,7 @@ export class SelectionHighlighter {
         const pts = new THREE.Points(g, m);
         pts.raycast = () => {};
         depthNudge(pts, topo.diag * 5e-4);
-        actor.add(pts);
+        if (autoAdd) actor.add(pts);
         return pts;
     }
 

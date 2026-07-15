@@ -79,7 +79,9 @@ interface SceneControllerInstance {
     resetView?: () => void;
     addBoxActor?: (length: number, width: number, height: number) => any;
     PlotContour?: (state: boolean) => void;
+    PlotDeformedContour?: (state: boolean) => boolean;
     ToggleCameraNav?: () => void;
+    globalOpacity?: number;
 }
 
 // Definition specification requirements targeting explicit Toolbar props mappings instances
@@ -103,6 +105,7 @@ interface ToolbarProps {
     onSetMeasurementMode?: (mode: "distance" | "angle" | null) => void;
     onClearMeasurements?: () => void;
     onOpenSettings: () => void;
+    onResetApp?: () => void;
 }
 
 export default function Toolbar({ 
@@ -124,12 +127,36 @@ export default function Toolbar({
     measurementMode = null,
     onSetMeasurementMode,
     onClearMeasurements,
-    onOpenSettings  
+    onOpenSettings,
+    onResetApp
 }: ToolbarProps) {
     const [activeTab, setActiveTab] = useState<string>("home");
+    const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
     const [isOpenDialog, setIsOpenDialog] = useState<boolean>(false);
     const [boxDimensions, setBoxDimensions] = useState<BoxDimensions>({ length: 1, width: 1, height: 1 });
     const [showContour, setShowContour] = useState<boolean>(false);
+    const [showDeformedContour, setShowDeformedContour] = useState<boolean>(false);
+    const [globalOpacity, setGlobalOpacity] = useState(1);
+    const [isOpacityOpen, setIsOpacityOpen] = useState(false);
+
+    const applyGlobalOpacity = useCallback((raw: number) => {
+        const opacity = Math.round(Math.max(0, Math.min(1, raw)) / 0.05) * 0.05;
+        setGlobalOpacity(opacity);
+        if (sceneController) sceneController.globalOpacity = opacity;
+        sceneController?.scene?.traverse?.((actor: any) => actor?.isActor && actor.setOpacity?.(opacity));
+        sceneController?.requestRender?.();
+    }, [sceneController]);
+
+    useEffect(() => {
+        const syncContourState = (event: Event) => {
+            const detail = (event as CustomEvent<{ visible?: boolean; deformed?: boolean }>).detail;
+            const visible = detail?.visible ?? true;
+            setShowContour(visible);
+            if (detail?.deformed !== undefined) setShowDeformedContour(detail.deformed);
+        };
+        window.addEventListener("fea-contour-state", syncContourState);
+        return () => window.removeEventListener("fea-contour-state", syncContourState);
+    }, []);
     
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -149,7 +176,13 @@ export default function Toolbar({
     });
     const clipOriginalDataRef = useRef<WeakMap<any, any>>(new WeakMap());
     const clipLastCountRef = useRef<number>(0);
-    const applyClipRef = useRef<((state?: ClipState) => void) | null>(null);
+    const applyClipRef = useRef<((state?: ClipState, scalarVisible?: boolean) => void) | null>(null);
+
+    useEffect(() => {
+        const reapplyClipAfterScale = () => applyClipRef.current?.(undefined, true);
+        window.addEventListener("fea-deformation-scale-changed", reapplyClipAfterScale);
+        return () => window.removeEventListener("fea-deformation-scale-changed", reapplyClipAfterScale);
+    }, []);
 
     // Computes aggregate bounding constraints for active mesh instances across the spatial scene
     const getModelBounds = useCallback(() => {
@@ -183,7 +216,7 @@ export default function Toolbar({
     }, [sceneController]);
 
     // Updates state matrix configurations, geometries, and visual representations for active section layers
-    const applyClip = useCallback((state: ClipState = clip): void => {
+    const applyClip = useCallback((state: ClipState = clip, scalarVisible: boolean = showContour): void => {
         if (!sceneController?.scene) return;
         const helpers = clipHelpersRef.current;
         const scene = sceneController.scene;
@@ -257,10 +290,12 @@ export default function Toolbar({
             if (!mapper?.input || typeof mapper.setInputData !== "function") return;
 
             const originals = clipOriginalDataRef.current;
-            const originalInput = originals.get(obj) ?? mapper.input;
+            const originalInput = obj.userData.__undeformedInput ?? originals.get(obj) ?? mapper.input;
             if (!originals.has(obj)) originals.set(obj, originalInput);
 
-            let output = originalInput;
+            let output = obj.userData.__deformationActive
+                ? (obj.userData.__deformationInput ?? originalInput)
+                : originalInput;
             for (const f of activeFilters) {
                 output = new ClipClosedSurfaceFilter()
                     .setInputData(output)
@@ -271,7 +306,7 @@ export default function Toolbar({
             }
 
             mapper.setInputData(output);
-            obj.setScalarVisibility?.(showContour);
+            obj.setScalarVisibility?.(scalarVisible);
             obj.update?.();
         });
 
@@ -455,11 +490,6 @@ export default function Toolbar({
         onSceneChanged?.();
     };
 
-    const handleResetView = (): void => {
-        if (!sceneController || typeof sceneController.resetView !== "function") return;
-        sceneController.resetView();
-    };
-
     // Drops and flushes out loaded simulation components inside the visualization context
     const handleClearScene = (): void => {
         if (!sceneController || !sceneController.scene) return;
@@ -479,7 +509,32 @@ export default function Toolbar({
         if (sceneController._actorCounter !== undefined) sceneController._actorCounter = 0;
         if (typeof sceneController.updateClipping === "function") sceneController.updateClipping();
         if (sceneController.scalarBar) sceneController.scalarBar.setVisible(false);
+        window.dispatchEvent(new Event("fea-field-data-changed"));
         onSceneChanged?.();
+    };
+
+    const handleResetApp = (): void => {
+        const confirmed = window.confirm(
+            "Reset the application? All loaded models, measurements, and current settings will be cleared."
+        );
+        if (!confirmed) return;
+
+        handleClearScene();
+        onClearMeasurements?.();
+        setActiveTab("home");
+        setIsCollapsed(false);
+        setIsOpenDialog(false);
+        setIsClipOpen(false);
+        setBoxDimensions({ length: 1, width: 1, height: 1 });
+        setShowContour(false);
+        setShowDeformedContour(false);
+        setClip({
+            x: { on: false, pos: 0, flip: false, showPlane: true },
+            y: { on: false, pos: 0, flip: false, showPlane: true },
+            z: { on: false, pos: 0, flip: false, showPlane: true },
+        });
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        onResetApp?.();
     };
 
     const handleOpenBoxDialog = (): void => setIsOpenDialog(true);
@@ -503,9 +558,24 @@ export default function Toolbar({
 
     const handleToggleContour = (): void => {
         if (!sceneController) return;
-        const nextState = !showContour;
+        const nextState = showDeformedContour ? true : !showContour;
         setShowContour(nextState);
+        setShowDeformedContour(false);
         if (typeof sceneController.PlotContour === "function") sceneController.PlotContour(nextState);
+        applyClipRef.current?.(undefined, nextState);
+        onSceneChanged?.();
+    };
+
+    const handleToggleDeformedContour = (): void => {
+        if (!sceneController) return;
+        const nextState = !showDeformedContour;
+        const applied = sceneController.PlotDeformedContour?.(nextState) ?? false;
+        if (nextState && !applied) {
+            window.alert('No 3-component point vector named "Displacement" or "U" was found.');
+        }
+        setShowDeformedContour(nextState && applied);
+        setShowContour(nextState && applied);
+        applyClipRef.current?.(undefined, nextState && applied);
         onSceneChanged?.();
     };
 
@@ -518,8 +588,9 @@ export default function Toolbar({
     const commandActionsRef = useRef<Record<string, ToolbarAction | undefined>>({});
     commandActionsRef.current = {
         openFile: handleOpenClick,
-        resetView: handleResetView,
+        resetView: handleResetApp,
         toggleContour: handleToggleContour,
+        toggleDeformedContour: handleToggleDeformedContour,
         openSettings: onOpenSettings,
         clearScene: handleClearScene,
         openClipDialog,
@@ -574,7 +645,10 @@ export default function Toolbar({
     }
 
     return (
-        <div className="ribbon-toolbar" style={{ background: toolbarBg, borderBottom: borderStyle, color: textColor, transition: "all 0.15s ease" }}>
+        <div
+            className={`ribbon-toolbar${isCollapsed ? " collapsed" : ""}`}
+            style={{ background: toolbarBg, borderBottom: borderStyle, color: textColor }}
+        >
             <input  type="file" 
                     ref={fileInputRef}
                     style={{ display: "none" }} 
@@ -610,15 +684,30 @@ export default function Toolbar({
                             key={tab}
                             style={tabStyle}
                             onClick={() => setActiveTab(tab)}
+                            onDoubleClick={() => {
+                                setActiveTab(tab);
+                                setIsCollapsed(false);
+                            }}
                         >
                             {tab.charAt(0).toUpperCase() + tab.slice(1)}
                         </button>
                     );
                 })}
+                <button
+                    type="button"
+                    className="ribbon-collapse-btn"
+                    style={{ color: textColor, borderColor: borderStyle.replace("1px solid ", "") }}
+                    aria-label={isCollapsed ? "Expand toolbar" : "Collapse toolbar"}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? "Expand toolbar" : "Collapse toolbar"}
+                    onClick={() => setIsCollapsed((collapsed) => !collapsed)}
+                >
+                    <span aria-hidden="true">{isCollapsed ? "⌄" : "⌃"}</span>
+                </button>
             </div>
 
             {/* Ribbon Segment Container Control Groups */}
-            <div className="ribbon-body" style={{ background: bodyBg, borderTop: borderStyle, display: "flex", gap: "10px", padding: "6px", marginTop: "-1px" }}>
+            {!isCollapsed && <div className="ribbon-body" style={{ background: bodyBg, borderTop: borderStyle, display: "flex", gap: "10px", padding: "6px", marginTop: "-1px" }}>
                 
                 {/* Home Operations Category */}
                 {activeTab === "home" && (
@@ -637,8 +726,7 @@ export default function Toolbar({
                                 <RibbonButton 
                                     icon="fitcontent" 
                                     label="Reset" 
-                                    hotkey="Esc"
-                                    instruction="Restore target view position vector alignments back to default coordinates state parameters."
+                                    instruction="Clear all loaded data and restore the application to its initial settings after confirmation."
                                     textColor={textColor}
                                     commandId="view.reset"
                                     onCommand={runCommand}
@@ -660,6 +748,16 @@ export default function Toolbar({
                                     onCommand={runCommand}
                                     instruction="Render post-processing continuous isoline color map gradients derived from calculated node arrays."
                                 />
+                                <RibbonButton
+                                    icon="contour"
+                                    label="Def Contour"
+                                    textColor={textColor}
+                                    active={showDeformedContour}
+                                    activeBtnBg={activeBtnBg}
+                                    commandId="result.toggleDeformedContour"
+                                    onCommand={runCommand}
+                                    instruction="Render contour on the mesh deformed by the Displacement or U point vector."
+                                />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Result</div>
                         </div>
@@ -676,6 +774,25 @@ export default function Toolbar({
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Configuration</div>
+                        </div>
+                        <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: 8 }}>
+                            <div className="ribbon-group-content" style={{ display: "flex", alignItems: "center", minHeight: 42 }}>
+                                <div style={{ position: "relative", display: "flex", height: 25 }}>
+                                    <input aria-label="Global model opacity" type="number" min="0" max="1" step="0.05"
+                                        value={globalOpacity.toFixed(2)} onChange={(e) => applyGlobalOpacity(Number(e.target.value))}
+                                        style={{ width: 58, border: borderStyle, borderRadius: "4px 0 0 4px", padding: "0 5px", background: bodyBg, color: textColor }} />
+                                    <button type="button" title="Adjust global opacity" onClick={() => setIsOpacityOpen((open) => !open)}
+                                        style={{ width: 24, border: borderStyle, borderLeft: 0, borderRadius: "0 4px 4px 0", background: bodyBg, color: textColor, cursor: "pointer" }}>▾</button>
+                                    {isOpacityOpen && <div style={{ position: "absolute", top: 29, right: 0, zIndex: 200, width: 190, padding: "10px 12px", border: borderStyle, borderRadius: 6, background: bodyBg, boxShadow: "0 6px 18px rgba(0,0,0,.25)" }}>
+                                        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11 }}>
+                                            <span>0</span>
+                                            <input type="range" min="0" max="1" step="0.05" value={globalOpacity} onChange={(e) => applyGlobalOpacity(Number(e.target.value))} style={{ flex: 1 }} />
+                                            <span>1</span>
+                                        </div>
+                                    </div>}
+                                </div>
+                            </div>
+                            <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Global Opacity</div>
                         </div>
                     </>
                 )}
@@ -872,7 +989,7 @@ export default function Toolbar({
                         <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Support</div>
                     </div>
                 )}
-            </div>
+            </div>}
 
             {/* Modal Input Form Interface Handling Box Boundary Initializations */}
             {isOpenDialog && (

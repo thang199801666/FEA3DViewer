@@ -1,234 +1,103 @@
 import { useEffect, useState } from "react";
 import Icon from "../components/Icon";
 
-export default function ModelTree({
-    sceneController,
-    sceneVersion,
-    theme,
-}) {
-    const [nodes, setNodes] = useState([]);
-    const [selectedNodeId, setSelectedNodeId] = useState(null);
-
+export default function ModelTree({ sceneController, sceneVersion, theme, selectedIds, onSelectionChange, onModelsDeleted }) {
+    const [nodes, setNodes] = useState<any[]>([]);
+    const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: any } | null>(null);
     const isDark = theme === "dark";
 
-    // Remove file extensions for cleaner display
-    const cleanActorName = (name) => {
-        if (!name) return "Unnamed Model";
-        return name.replace(/\.[^/.]+$/, "");
-    };
-
-    // Read all actors from the scene
     const refreshTree = () => {
-        if (!sceneController?.scene) {
-            setNodes([]);
-            return;
-        }
-
-        const list = [];
-
-        sceneController.scene.traverse((object) => {
-            if (object?.isActor) {
-                list.push({
-                    id: object.uuid,
-                    name: cleanActorName(object.name),
-                    visible: object.visible !== false,
-                });
-            }
+        const list: any[] = [];
+        sceneController?.scene?.traverse?.((actor: any) => {
+            if (actor?.isActor) list.push({ id: actor.uuid, actor, name: (actor.name || "Unnamed Model").replace(/\.[^/.]+$/, ""), visible: actor.visible !== false });
         });
-
         setNodes(list);
     };
-
+    useEffect(refreshTree, [sceneController, sceneVersion]);
     useEffect(() => {
-        refreshTree();
-    }, [sceneController, sceneVersion]);
+        const close = () => setContextMenu(null);
+        window.addEventListener("pointerdown", close);
+        return () => window.removeEventListener("pointerdown", close);
+    }, []);
 
-    // Toggle actor visibility
-    const toggleVisibility = (e, nodeId) => {
-        e.stopPropagation();
+    const select = (event: React.MouseEvent, index: number) => {
+        const id = nodes[index].id;
+        let next: string[];
+        if (event.shiftKey && anchorIndex !== null) {
+            const [a, b] = [anchorIndex, index].sort((x, y) => x - y);
+            const range = nodes.slice(a, b + 1).map((node) => node.id);
+            next = event.ctrlKey || event.metaKey ? [...new Set([...selectedIds, ...range])] : range;
+        } else if (event.ctrlKey || event.metaKey) {
+            next = selectedIds.includes(id) ? selectedIds.filter((value) => value !== id) : [...selectedIds, id];
+            setAnchorIndex(index);
+        } else {
+            next = [id];
+            setAnchorIndex(index);
+        }
+        const actors = next.map((selectedId) => nodes.find((node) => node.id === selectedId)?.actor).filter(Boolean);
+        sceneController?.pickingController?.selectActors?.(actors, false);
+        onSelectionChange?.(next, nodes[index].actor);
+        sceneController?.requestRender?.();
+    };
 
-        if (!sceneController?.scene) return;
-
-        sceneController.scene.traverse((object) => {
-            if (object?.isActor && object.uuid === nodeId) {
-                object.visible = !object.visible;
-            }
-        });
-
-        sceneController.requestRender?.();
+    const toggleVisibility = (event: React.MouseEvent, node: any) => {
+        event.stopPropagation();
+        node.actor.visible = !node.actor.visible;
+        sceneController?.requestRender?.();
         refreshTree();
     };
 
-    // Select actor
-    const handleSelectNode = (nodeId) => {
-        setSelectedNodeId(nodeId);
+    const removeIds = (ids: string[]) => {
+        const targets = nodes.filter((node) => ids.includes(node.id));
+        if (!targets.length) return;
+        sceneController?.pickingController?.clearSelection?.();
+        for (const { actor } of targets) {
+            if (sceneController?.renderer?.removeActor) sceneController.renderer.removeActor(actor);
+            else actor.parent?.remove(actor);
+            actor.dispose?.();
+        }
+        onSelectionChange?.([], null);
+        onModelsDeleted?.();
+        window.dispatchEvent(new Event("fea-field-data-changed"));
+        sceneController?.updateClipping?.();
+        sceneController?.requestRender?.();
+        refreshTree();
+    };
+    const removeSelected = () => removeIds(selectedIds);
 
-        if (!sceneController?.scene) return;
-
-        sceneController.scene.traverse((object) => {
-            if (object?.isActor && object.uuid === nodeId) {
-                if (sceneController.selectActor) {
-                    sceneController.selectActor(object);
-                } else if (sceneController.highlightObject) {
-                    sceneController.highlightObject(object);
-                } else {
-                    console.log("Selected actor:", object.name);
-                }
-            }
-        });
-
-        sceneController.requestRender?.();
+    const openContextMenu = (event: React.MouseEvent, node: any, index: number) => {
+        event.preventDefault();
+        event.stopPropagation();
+        sceneController?.pickingController?.selectActors?.([node.actor], false);
+        onSelectionChange?.([node.id], node.actor);
+        setAnchorIndex(index);
+        setContextMenu({ x: event.clientX, y: event.clientY, node });
+        sceneController?.requestRender?.();
     };
 
     return (
-        <div
-            style={{
-                padding: "10px 12px",
-                height: "100%",
-                overflowY: "auto",
-                color: isDark ? "#e0e0e0" : "#111",
-                fontFamily: "sans-serif"
-            }}
-        >
-            <h3
-                style={{
-                    fontSize: 11,
-                    fontWeight: "bold",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                    marginTop: 0,
-                    marginBottom: 10,
-                    color: isDark ? "#888" : "#666",
-                }}
-            >
-                Model Tree
-            </h3>
-
-            <ul
-                style={{
-                    listStyle: "none",
-                    margin: 0,
-                    padding: 0,
-                    fontSize: 12,
-                }}
-            >
-                {nodes.length === 0 && (
-                    <li
-                        style={{
-                            color: isDark ? "#666" : "#888",
-                            fontStyle: "italic",
-                            padding: "4px 0",
-                        }}
-                    >
-                        No actors loaded
-                    </li>
-                )}
-
-                {nodes.map((node) => {
-                    const isSelected = selectedNodeId === node.id;
-
-                    return (
-                        <li
-                            key={node.id}
-                            onClick={() => handleSelectNode(node.id)}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "3px 6px",
-                                marginBottom: 2,
-                                borderRadius: 3,
-                                cursor: "pointer",
-                                border: isSelected
-                                    ? "1px solid #2196F3"
-                                    : "1px solid transparent",
-                                background: isSelected
-                                    ? isDark
-                                        ? "rgba(33,150,243,.25)"
-                                        : "rgba(33,150,243,.12)"
-                                    : isDark
-                                      ? "rgba(255,255,255,.02)"
-                                      : "rgba(0,0,0,.015)",
-                                transition:
-                                    "background-color .1s, border-color .1s",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 6,
-                                    overflow: "hidden",
-                                    flex: 1,
-                                }}
-                            >
-                                <span style={{ display: "flex", alignItems: "center" }}>
-                                    <Icon
-                                        name={"part"}
-                                        size={16}
-                                    />
-                                </span>
-
-                                <span
-                                    style={{
-                                        textDecoration: node.visible
-                                            ? "none"
-                                            : "line-through",
-                                        opacity: node.visible ? 1 : 0.45,
-                                        fontWeight: isSelected
-                                            ? "600"
-                                            : "400",
-                                        whiteSpace: "nowrap",
-                                        overflow: "hidden",
-                                        textOverflow: "ellipsis",
-                                        lineHeight: "16px",
-                                    }}
-                                >
-                                    {node.name}
-                                </span>
-                            </div>
-
-                            <button
-                                onClick={(e) =>
-                                    toggleVisibility(e, node.id)
-                                }
-                                title={
-                                    node.visible
-                                        ? "Hide Actor"
-                                        : "Show Actor"
-                                }
-                                style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    padding: 1,
-                                    marginLeft: 6,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    cursor: "pointer",
-                                    color: node.visible
-                                        ? isDark
-                                            ? "#4da3ff"
-                                            : "#0066cc"
-                                        : isDark
-                                          ? "#666"
-                                          : "#aaa",
-                                    transition: "color .1s",
-                                }}
-                            >
-                                <Icon
-                                    name={
-                                        node.visible
-                                            ? "treeitemvisible"
-                                            : "treeiteminvisible"
-                                    }
-                                    size={16}
-                                />
-                            </button>
-                        </li>
-                    );
-                })}
-            </ul>
+        <div tabIndex={0} onKeyDown={(e) => e.key === "Delete" && removeSelected()}
+            style={{ padding: "10px 12px", height: "100%", overflowY: "auto", color: isDark ? "#e0e0e0" : "#111", fontFamily: "sans-serif", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <h3 style={{ fontSize: 11, margin: 0, color: isDark ? "#888" : "#666", letterSpacing: ".5px" }}>MODEL TREE</h3>
+                <button onClick={removeSelected} disabled={!selectedIds.length} title="Delete selected models"
+                    style={{ border: 0, background: "transparent", color: selectedIds.length ? "#d33" : "#999", cursor: selectedIds.length ? "pointer" : "default", fontSize: 16 }}>×</button>
+            </div>
+            {!nodes.length && <div style={{ color: "#888", fontSize: 12, fontStyle: "italic" }}>No actors loaded</div>}
+            {nodes.map((node, index) => {
+                const selected = selectedIds.includes(node.id);
+                return <div key={node.id} onClick={(e) => select(e, index)} onContextMenu={(e) => openContextMenu(e, node, index)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", marginBottom: 2, borderRadius: 3, cursor: "pointer", border: selected ? "1px solid #2196f3" : "1px solid transparent", background: selected ? "rgba(33,150,243,.18)" : "transparent" }}>
+                    <Icon name="part" size={16} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, opacity: node.visible ? 1 : .45, textDecoration: node.visible ? "none" : "line-through" }}>{node.name}</span>
+                    <button onClick={(e) => toggleVisibility(e, node)} style={{ border: 0, background: "transparent", padding: 1, cursor: "pointer" }}>
+                        <Icon name={node.visible ? "treeitemvisible" : "treeiteminvisible"} size={16} />
+                    </button>
+                </div>;
+            })}
+            {contextMenu && <div onPointerDown={(e) => e.stopPropagation()} style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 1000, minWidth: 130, padding: 4, border: isDark ? "1px solid #555" : "1px solid #bbb", borderRadius: 5, background: isDark ? "#292929" : "#fff", boxShadow: "0 5px 16px rgba(0,0,0,.28)" }}>
+                <button onClick={() => { removeIds([contextMenu.node.id]); setContextMenu(null); }} style={{ display: "block", width: "100%", padding: "6px 12px", border: 0, borderRadius: 3, textAlign: "left", background: "transparent", color: "#d33", cursor: "pointer" }}>Delete</button>
+            </div>}
         </div>
     );
 }

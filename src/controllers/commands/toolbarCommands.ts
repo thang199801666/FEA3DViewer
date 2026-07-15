@@ -2,6 +2,7 @@ export type ToolbarCommandId =
     | "file.open"
     | "view.reset"
     | "result.toggleContour"
+    | "result.toggleDeformedContour"
     | "app.openSettings"
     | "scene.clear"
     | "clip.open"
@@ -51,6 +52,10 @@ export const toolbarCommands: Record<ToolbarCommandId, ToolbarCommand> = {
     "result.toggleContour": {
         id: "result.toggleContour",
         execute: (context) => runAction(context, "toggleContour"),
+    },
+    "result.toggleDeformedContour": {
+        id: "result.toggleDeformedContour",
+        execute: (context) => runAction(context, "toggleDeformedContour"),
     },
     "app.openSettings": {
         id: "app.openSettings",

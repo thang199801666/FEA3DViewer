@@ -19,6 +19,9 @@ import {
     applyVTKCameraApi,
     NAV_STYLE,
     RUBBER_BAND_MODE,
+    WarpFilter,
+    DataArray,
+    polyDataFromExtracted,
 } from "../threejsVTK/src";
 
 // App controllers (Not part of the library)
@@ -30,6 +33,35 @@ applyVTKCameraApi(Camera);
 
 const GRID_NAME = "system_grid";
 
+// vtkGeometryFilter-style face cancellation at PolyData topology level. This
+// runs before triangulation, so shared quad faces are removed even when two
+// neighboring cells would triangulate that quad along different diagonals.
+function extractBoundaryFacePolyData(input: any) {
+    if (!input?.polys || input.polys.length === 0) return input;
+    const records = new Map<string, { count: number; face: number[]; index: number }>();
+    let index = 0;
+    for (const cell of input.polys) {
+        const face = Array.from(cell as Iterable<number>);
+        const key = [...face].sort((a, b) => a - b).join("_");
+        const record = records.get(key);
+        if (record) record.count++;
+        else records.set(key, { count: 1, face, index });
+        index++;
+    }
+    if (![...records.values()].some((record) => record.count > 1)) return input;
+
+    const kept = [...records.values()].filter((record) => record.count % 2 === 1);
+    const output = input.clone();
+    output.setPolys(kept.map((record) => record.face));
+    const sourceMap = input.userData?.polySourceCellMap;
+    output.userData = { ...input.userData };
+    if (sourceMap) {
+        output.userData.polySourceCellMap = Int32Array.from(kept.map((record) => sourceMap[record.index]));
+    }
+    output.userData.exteriorSurface = true;
+    return output;
+}
+
 const RUBBER_BAND_STYLES: Record<string | number, { border: string; background: string }> = {
     [RUBBER_BAND_MODE.CROSSING]: { border: "1.5px solid #4da3ff", background: "rgba(77, 163, 255, 0.15)" },
     [RUBBER_BAND_MODE.WINDOW]:   { border: "1.5px dashed #35c159", background: "rgba(53, 193, 89, 0.15)" },
@@ -37,6 +69,81 @@ const RUBBER_BAND_STYLES: Record<string | number, { border: string; background: 
 
 const VIEWS = ["Front", "Back", "Top", "Bottom", "Left", "Right", "Isometric"] as const;
 type ViewDirection = typeof VIEWS[number];
+
+type FieldComponentOption = { key: string; label: string; component: number; derived?: "mises" };
+type ContourFieldOption = { name: string; components: FieldComponentOption[] };
+
+function fieldComponents(name: string, count: number): FieldComponentOption[] {
+    if (count <= 1) return [{ key: "0", label: name, component: 0 }];
+    const upper = name.toUpperCase();
+    if (count === 3 && ["U", "V", "A", "RF", "CF"].includes(upper)) {
+        return [0, 1, 2].map((component) => ({ key: `${component}`, label: `${name}${component + 1}`, component }))
+            .concat([{ key: "magnitude", label: `${name}_Magnitude`, component: -1 }]);
+    }
+    if (count === 6 && upper.startsWith("S")) {
+        const labels = ["11", "22", "33", "12", "23", "13"];
+        return labels.map((suffix, component) => ({ key: `${component}`, label: `${name}${suffix}`, component }))
+            .concat([{ key: "mises", label: `${name}_Mises`, component: 0, derived: "mises" }]);
+    }
+    if (count === 9 && upper.startsWith("S")) {
+        const labels = ["11", "12", "13", "21", "22", "23", "31", "32", "33"];
+        return labels.map((suffix, component) => ({ key: `${component}`, label: `${name}${suffix}`, component }))
+            .concat([{ key: "mises", label: `${name}_Mises`, component: 0, derived: "mises" }]);
+    }
+    return Array.from({ length: count }, (_, component) => ({
+        key: `${component}`, label: `${name}${component + 1}`, component
+    })).concat([{ key: "magnitude", label: `${name}_Magnitude`, component: -1 }]);
+}
+
+function defaultFieldComponent(field: ContourFieldOption | undefined): FieldComponentOption | undefined {
+    if (!field) return undefined;
+    const hasName = (component: FieldComponentOption, name: string) =>
+        component.key.toLowerCase() === name
+        || component.label.toLowerCase().includes(name);
+    return field.components.find((component) => hasName(component, "mises"))
+        ?? field.components.find((component) => hasName(component, "magnitude"))
+        ?? field.components[0];
+}
+
+function collectContourFields(scene: any): ContourFieldOption[] {
+    const fields = new Map<string, number>();
+    scene?.traverse?.((obj: any) => {
+        if (!obj?.isActor) return;
+        const data = obj.userData.__undeformedInput ?? obj.mapper?.input;
+        const pointData = data?.pointData;
+        for (const name of pointData?.getArrayNames?.() ?? []) {
+            if (name.startsWith("__derived_")) continue;
+            const array = pointData.getArray(name);
+            if (array?.getNumberOfTuples?.() === data.getNumberOfPoints?.()) {
+                fields.set(name, Math.max(fields.get(name) ?? 0, array.numberOfComponents));
+            }
+        }
+    });
+    return [...fields].map(([name, count]) => ({ name, components: fieldComponents(name, count) }));
+}
+
+function addMisesArray(data: any, sourceName: string): string | null {
+    const source = data?.pointData?.getArray?.(sourceName);
+    if (!source || (source.numberOfComponents !== 6 && source.numberOfComponents !== 9)) return null;
+    const derivedName = `__derived_${sourceName}_Mises`;
+    if (data.pointData.getArray(derivedName)) return derivedName;
+    const values = new Float32Array(source.getNumberOfTuples());
+    for (let i = 0; i < values.length; i++) {
+        let s11, s22, s33, s12, s23, s13;
+        if (source.numberOfComponents === 6) {
+            s11 = source.getComponent(i, 0); s22 = source.getComponent(i, 1); s33 = source.getComponent(i, 2);
+            s12 = source.getComponent(i, 3); s23 = source.getComponent(i, 4); s13 = source.getComponent(i, 5);
+        } else {
+            s11 = source.getComponent(i, 0); s22 = source.getComponent(i, 4); s33 = source.getComponent(i, 8);
+            s12 = (source.getComponent(i, 1) + source.getComponent(i, 3)) * 0.5;
+            s23 = (source.getComponent(i, 5) + source.getComponent(i, 7)) * 0.5;
+            s13 = (source.getComponent(i, 2) + source.getComponent(i, 6)) * 0.5;
+        }
+        values[i] = Math.sqrt(0.5 * ((s11-s22)**2 + (s22-s33)**2 + (s33-s11)**2) + 3 * (s12**2 + s23**2 + s13**2));
+    }
+    data.pointData.addArray(new DataArray(derivedName, values, 1));
+    return derivedName;
+}
 
 interface RubberBandSelectionOptions {
     additive: boolean;
@@ -123,7 +230,14 @@ export default function Scene({
 
     const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
     const [cameraType, setCameraType] = useState<"orthographic" | "perspective">("orthographic");
+    const [contourFields, setContourFields] = useState<ContourFieldOption[]>([]);
+    const [selectedField, setSelectedField] = useState<string>("");
+    const [selectedComponent, setSelectedComponent] = useState<string>("");
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const scaleControlRef = useRef<HTMLDivElement>(null);
+    const [isScaleOpen, setIsScaleOpen] = useState(false);
+    const [deformationScale, setDeformationScale] = useState(1);
+    const [deformationScaleText, setDeformationScaleText] = useState("1");
 
     useEffect(() => { otherControllerRef.current = otherController; }, [otherController]);
     useEffect(() => { isViewLinkedRef.current = isViewLinked; }, [isViewLinked]);
@@ -132,9 +246,36 @@ export default function Scene({
     useEffect(() => { showRulerRef.current = showRuler; }, [showRuler]);
 
     useEffect(() => {
+        const refresh = () => {
+            const next = collectContourFields(sharedScene);
+            setContourFields(next);
+            setSelectedField((current) => next.some((f) => f.name === current) ? current : (next[0]?.name ?? ""));
+            setSelectedComponent((current) => current || (defaultFieldComponent(next[0])?.key ?? ""));
+        };
+        refresh();
+        window.addEventListener("fea-field-data-changed", refresh);
+        return () => window.removeEventListener("fea-field-data-changed", refresh);
+    }, [sharedScene]);
+
+    useEffect(() => {
+        const syncScale = (event: Event) => {
+            const scale = (event as CustomEvent<{ scale?: number }>).detail?.scale;
+            if (!Number.isFinite(scale)) return;
+            setDeformationScale(scale!);
+            setDeformationScaleText(`${scale}`);
+            if (sceneControllerRef.current) sceneControllerRef.current.deformationScaleFactor = scale;
+        };
+        window.addEventListener("fea-deformation-scale-changed", syncScale);
+        return () => window.removeEventListener("fea-deformation-scale-changed", syncScale);
+    }, []);
+
+    useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
                 setIsDropdownOpen(false);
+            }
+            if (scaleControlRef.current && !scaleControlRef.current.contains(event.target as Node)) {
+                setIsScaleOpen(false);
             }
         }
         document.addEventListener("mousedown", handleClickOutside);
@@ -454,14 +595,23 @@ export default function Scene({
 
         sceneController.PlotContour = (visibleState: boolean) => {
             if (!sceneController.scene) return;
+            sceneController.deformationVisible = false;
 
             let lastActor: any = null;
-            for (const child of sceneController.scene.children) {
-                if ((child as any).isActor && typeof (child as any).setScalarVisibility === "function") {
-                    (child as any).setScalarVisibility(visibleState);
-                    lastActor = child;
+            sceneController.scene.traverse((child: any) => {
+                if (child.isActor && typeof child.setScalarVisibility === "function") {
+                    const actor = child;
+                    const original = actor.userData.__undeformedInput;
+                    if (original && actor.mapper?.input !== original) {
+                        actor.mapper.setInputData(original);
+                        actor.userData.__deformationActive = false;
+                        actor.update?.();
+                    }
+                    const canShowSelectedField = actor.userData.__hasSelectedContourField !== false;
+                    actor.setScalarVisibility(visibleState && canShowSelectedField);
+                    if (canShowSelectedField) lastActor = child;
                 }
-            }
+            });
 
             if (scalarBar) {
                 if (visibleState && lastActor) {
@@ -475,7 +625,12 @@ export default function Scene({
                         const scalars = defaultPointData?.getScalars?.();
                         if (scalars?.getRange) range = scalars.getRange();
                     }
-                    scalarBar.show({ title: lastActor.name || "Contour", range, numberOfColors: 12, anchor: "TopLeft" });
+                    scalarBar.show({
+                        title: sceneController.selectedContourLabel || lastActor.name || "Contour",
+                        range: sceneController.selectedContourRange ?? range,
+                        numberOfColors: 12,
+                        anchor: "TopLeft"
+                    });
                 } else {
                     scalarBar.setVisible?.(false);
                 }
@@ -484,12 +639,201 @@ export default function Scene({
             else renderWindow.render();
         };
 
+        sceneController.SetContourField = (fieldName: string, componentKey: string) => {
+            const matches: Array<{ actor: any; colorName: string; colorComponent: number; descriptor: FieldComponentOption; range: number[] }> = [];
+            let selectedLabel = fieldName;
+
+            const actors: any[] = [];
+            sceneController.scene.traverse((object: any) => object?.isActor && actors.push(object));
+            for (const actor of actors) {
+                if (!actor.isActor || !actor.mapper?.input) continue;
+                const current = actor.mapper.input;
+                const source = current.pointData?.getArray?.(fieldName);
+                const descriptor = source
+                    ? fieldComponents(fieldName, source.numberOfComponents).find((c) => c.key === componentKey)
+                    : null;
+
+                if (!source || !descriptor) {
+                    actor.userData.__hasSelectedContourField = false;
+                    actor.setScalarVisibility?.(false);
+                    continue;
+                }
+
+                let colorName = fieldName;
+                let colorComponent = descriptor.component;
+                if (descriptor.derived === "mises") {
+                    const original = actor.userData.__undeformedInput;
+                    if (original) addMisesArray(original, fieldName);
+                    const deformed = actor.userData.__deformationInput;
+                    if (deformed && deformed !== original) addMisesArray(deformed, fieldName);
+                    colorName = addMisesArray(current, fieldName) ?? fieldName;
+                    colorComponent = 0;
+                }
+
+                const colorArray = current.pointData.getArray(colorName);
+                if (!colorArray) {
+                    actor.userData.__hasSelectedContourField = false;
+                    actor.setScalarVisibility?.(false);
+                    continue;
+                }
+                actor.userData.__hasSelectedContourField = true;
+                matches.push({
+                    actor,
+                    colorName,
+                    colorComponent,
+                    descriptor,
+                    range: colorArray.getRange(colorComponent),
+                });
+                selectedLabel = descriptor.label;
+            }
+
+            if (matches.length) {
+                const range = matches.reduce(
+                    (combined, match) => [Math.min(combined[0], match.range[0]), Math.max(combined[1], match.range[1])],
+                    [Infinity, -Infinity]
+                );
+                for (const { actor, colorName, colorComponent } of matches) {
+                    actor.mapper.setColorBy(colorName, colorComponent);
+                    actor.mapper.setScalarRange(range[0], range[1]);
+                    actor.setScalarVisibility?.(true);
+                    actor.update?.();
+                }
+                sceneController.selectedContourLabel = selectedLabel;
+                sceneController.selectedContourRange = range;
+                scalarBar.show({ title: selectedLabel, range, numberOfColors: 12, anchor: "TopLeft" });
+                window.dispatchEvent(new CustomEvent("fea-contour-state", { detail: { visible: true } }));
+            } else {
+                sceneController.selectedContourRange = null;
+                scalarBar.setVisible?.(false);
+            }
+            sceneController.requestRender?.();
+            if (matches.length) sceneController.PlotDeformedContour?.(true);
+            return matches.length > 0;
+        };
+
+        sceneController.PlotDeformedContour = (visibleState: boolean) => {
+            if (!sceneController.scene) return false;
+
+            let foundVector = false;
+            let lastDeformedActor: any = null;
+            let lastContourActor: any = null;
+            const actors: any[] = [];
+            sceneController.scene.traverse((object: any) => object?.isActor && actors.push(object));
+            for (const actor of actors) {
+                if (!actor.isActor || !actor.mapper?.input) continue;
+                const hasSelectedField = actor.userData.__hasSelectedContourField !== false;
+                if (hasSelectedField) lastContourActor = actor;
+
+                const original = actor.userData.__undeformedInput ?? actor.mapper.input;
+                actor.userData.__undeformedInput = original;
+                let output = original;
+
+                if (visibleState) {
+                    const pointData = original.pointData ?? original.getPointData?.();
+                    const names: string[] = pointData?.getArrayNames?.() ?? [];
+                    const vectorName = ["Displacement", "U"].find((preferred) => {
+                        const actual = names.find((name) => name.toLowerCase() === preferred.toLowerCase());
+                        return actual && pointData.getArray(actual)?.numberOfComponents === 3;
+                    });
+                    const actualName = vectorName
+                        ? names.find((name) => name.toLowerCase() === vectorName.toLowerCase())
+                        : null;
+                    if (actualName) {
+                        output = new WarpFilter()
+                            .setInputData(original)
+                            .setVectorArrayName(actualName)
+                            .setScaleFactor(sceneController.deformationScaleFactor ?? 1.0)
+                            .getOutputData();
+                        foundVector = true;
+                        if (hasSelectedField) lastDeformedActor = actor;
+                    }
+                }
+
+                actor.userData.__deformationInput = output;
+                actor.userData.__deformationActive = visibleState && output !== original;
+                actor.mapper.setInputData(output);
+                actor.setScalarVisibility?.(visibleState && hasSelectedField);
+                actor.update?.();
+            }
+
+            if (visibleState && lastDeformedActor) {
+                const mapper = lastDeformedActor.mapper;
+                const range = mapper?.getEffectiveScalarRange?.() ?? [0, 1];
+                scalarBar.show({
+                    title: sceneController.selectedContourLabel || lastDeformedActor.name || "Def Contour",
+                    range: sceneController.selectedContourRange ?? range,
+                    numberOfColors: 12,
+                    anchor: "TopLeft"
+                });
+            } else if (visibleState && lastContourActor) {
+                scalarBar.show({
+                    title: sceneController.selectedContourLabel || lastContourActor.name || "Contour",
+                    range: sceneController.selectedContourRange ?? lastContourActor.mapper?.getEffectiveScalarRange?.() ?? [0, 1],
+                    numberOfColors: 12,
+                    anchor: "TopLeft"
+                });
+            } else {
+                scalarBar.setVisible?.(false);
+            }
+            if (visibleState && !foundVector) {
+                console.warn('[Scene] Def Contour requires a 3-component point vector named "Displacement" or "U".');
+            }
+            sceneController.deformationVisible = visibleState && foundVector;
+            window.dispatchEvent(new CustomEvent("fea-contour-state", {
+                detail: { visible: visibleState, deformed: sceneController.deformationVisible }
+            }));
+            sceneController.requestRender?.();
+            return foundVector;
+        };
+
+        sceneController.deformationScaleFactor = 1.0;
+        sceneController.deformationVisible = false;
+        sceneController.SetDeformationScale = (value: number) => {
+            const scale = Math.min(100, Math.max(1, Number(value) || 1));
+            sceneController.deformationScaleFactor = scale;
+            if (sceneController.deformationVisible) {
+                sceneController.PlotDeformedContour(true);
+            }
+            window.dispatchEvent(new CustomEvent("fea-deformation-scale-changed", { detail: { scale } }));
+            return scale;
+        };
+
         sceneController.AddToRenderer = (actor: any, { showContour = false } = {}) => {
             if (!actor) return;
+            actor.setOpacity?.(sceneController.globalOpacity ?? 1);
+            if (actor.mapper?.input) {
+                const sourceInput = actor.mapper.input;
+                const boundaryInput = extractBoundaryFacePolyData(sourceInput);
+                if (boundaryInput !== sourceInput) {
+                    actor.mapper.setInputData(boundaryInput);
+                    actor.update?.();
+                }
+                // Actor has already performed vtkGeometryFilter-like exterior
+                // extraction while building its render geometry. Convert that
+                // exact retained shell back to PolyData and make it the only
+                // downstream input for contour, deformation and section cuts.
+                const exteriorInput = actor.surface?.geometry
+                    ? polyDataFromExtracted(boundaryInput, actor.surface.geometry)
+                    : boundaryInput;
+                actor.userData.__sourceInput = sourceInput;
+                actor.userData.__exteriorInput = exteriorInput;
+                actor.userData.__undeformedInput = exteriorInput;
+                if (exteriorInput !== sourceInput) {
+                    actor.mapper.setInputData(exteriorInput);
+                    actor.update?.();
+                }
+            }
             sceneController.scene.add(actor);
             sceneController.updateClipping();
             sceneController.fitView();
-            sceneController.PlotContour(showContour);
+            window.dispatchEvent(new Event("fea-field-data-changed"));
+            const firstField = collectContourFields(sceneController.scene)[0];
+            const firstComponent = defaultFieldComponent(firstField);
+            if (firstField && firstComponent) {
+                sceneController.SetContourField(firstField.name, firstComponent.key);
+            } else {
+                sceneController.PlotContour(showContour);
+            }
         };
 
         function resize() {
@@ -537,6 +881,10 @@ export default function Scene({
 
             renderWindow.render();
             activeCam.updateMatrixWorld(true);
+
+            // Widgets need the same focal-plane scale as the VTK camera.
+            activeCam.userData.focalPoint = camera.state.target;
+            activeCam.userData.focalDistance = camera.state.distance;
 
             if (showAxesRef.current) { triad.update(activeCam); triad.render(); }
             if (sceneController.showCameraNav) { gizmo.update(activeCam); gizmo.render(); }
@@ -593,21 +941,7 @@ export default function Scene({
         const controller = sceneControllerRef.current;
         const camWrapper = cameraRef.current;
 
-        const oldPos = camWrapper.getPosition?.([0, 0, 0]) ?? [0, 0, 0];
-        const targetState = camWrapper.state?.target;
-        const oldTarget = targetState
-            ? [targetState.x, targetState.y, targetState.z]
-            : [0, 0, 0];
-
-        if (Math.hypot(oldPos[0] - oldTarget[0], oldPos[1] - oldTarget[1], oldPos[2] - oldTarget[2]) < 0.001) {
-            oldPos[0] = oldTarget[0] + 10;
-            oldPos[1] = oldTarget[1] + 10;
-            oldPos[2] = oldTarget[2] + 10;
-        }
-
         camWrapper.switchType(type);
-        
-        camWrapper.setPosition?.(oldPos[0], oldPos[1], oldPos[2]);
         const newThreeCam = camWrapper.getThreeCamera?.();
         if (!newThreeCam) return;
         
@@ -619,7 +953,6 @@ export default function Scene({
 
         if (type === "perspective") {
             camWrapper.setClippingRange(0.1, 5000);
-            camWrapper.lookAt?.(oldTarget[0], oldTarget[1], oldTarget[2]);
         }
 
         newThreeCam.updateMatrix();
@@ -714,12 +1047,124 @@ export default function Scene({
         ? `linear-gradient(to top, ${bottomColor}, ${topColor})`
         : bottomColor;
 
+    const activeField = contourFields.find((field) => field.name === selectedField) ?? null;
+    const handleFieldChange = (fieldName: string) => {
+        const field = contourFields.find((item) => item.name === fieldName);
+        const component = defaultFieldComponent(field)?.key ?? "";
+        setSelectedField(fieldName);
+        setSelectedComponent(component);
+        if (fieldName && component) sceneControllerRef.current?.SetContourField?.(fieldName, component);
+    };
+    const handleComponentChange = (component: string) => {
+        setSelectedComponent(component);
+        if (selectedField && component) sceneControllerRef.current?.SetContourField?.(selectedField, component);
+    };
+    const commitDeformationScale = (value: number) => {
+        const scale = Math.min(100, Math.max(1, Number.isFinite(value) ? value : 1));
+        setDeformationScale(scale);
+        setDeformationScaleText(`${scale}`);
+        sceneControllerRef.current?.SetDeformationScale?.(scale);
+    };
+
     return (
         <div
-            ref={containerRef}
             className="scene-container"
-            style={{ width: "100%", height: "100%", position: "relative", background }}
+            style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}
         >
+            <div
+                id={`Field_Data_Container${viewportIndex > 1 ? `_${viewportIndex}` : ""}`}
+                className="Field_Data_Container"
+                style={{
+                    height: 32, minHeight: 32, boxSizing: "border-box",
+                    zIndex: 45, display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6,
+                    padding: "2px 10px", background: "linear-gradient(180deg, #f4f6f8 0%, #e4e8ec 100%)",
+                    borderBottom: "1px solid #a7afb8", color: "#20242a",
+                    font: "12px Arial, sans-serif", whiteSpace: "nowrap"
+                }}
+            >
+                <label htmlFor={`field-${viewportIndex}`} style={{ fontWeight: 600, color: "#4a5562", fontSize: 11 }}>Field</label>
+                <select
+                    id={`field-${viewportIndex}`}
+                    value={selectedField}
+                    onChange={(event) => handleFieldChange(event.target.value)}
+                    disabled={!contourFields.length}
+                    style={{
+                        width: 109, height: 26, boxSizing: "border-box", padding: "0 8px",
+                        border: "1px solid #a2abb5", borderRadius: 6, outline: "none",
+                        background: "linear-gradient(180deg, #fff 0%, #f7f8fa 100%)", color: "#26313d",
+                        boxShadow: "0 1px 2px rgba(25, 35, 45, .08)", fontSize: 12, cursor: "pointer"
+                    }}
+                >
+                    {!contourFields.length && <option value="">No field data</option>}
+                    {contourFields.map((field) => <option key={field.name} value={field.name}>{field.name}</option>)}
+                </select>
+                <label htmlFor={`component-${viewportIndex}`} style={{ fontWeight: 600, color: "#4a5562", fontSize: 11 }}>Component</label>
+                <select
+                    id={`component-${viewportIndex}`}
+                    value={selectedComponent}
+                    onChange={(event) => handleComponentChange(event.target.value)}
+                    disabled={!activeField}
+                    style={{
+                        width: 124, height: 26, boxSizing: "border-box", padding: "0 8px",
+                        border: "1px solid #a2abb5", borderRadius: 6, outline: "none",
+                        background: "linear-gradient(180deg, #fff 0%, #f7f8fa 100%)", color: "#26313d",
+                        boxShadow: "0 1px 2px rgba(25, 35, 45, .08)", fontSize: 12, cursor: "pointer"
+                    }}
+                >
+                    {!activeField && <option value="">No component</option>}
+                    {activeField?.components.map((component) => (
+                        <option key={component.key} value={component.key}>{component.label}</option>
+                    ))}
+                </select>
+                <div ref={scaleControlRef} style={{ position: "relative" }}>
+                    <div
+                        title="Deformation scale factor"
+                        onClick={() => setIsScaleOpen((open) => !open)}
+                        style={{
+                            width: 72, height: 26, boxSizing: "border-box", display: "flex", alignItems: "center",
+                            border: isScaleOpen ? "1px solid #3978c5" : "1px solid #a2abb5", borderRadius: 6,
+                            background: "linear-gradient(180deg, #fff 0%, #f7f8fa 100%)", cursor: "pointer",
+                            boxShadow: isScaleOpen ? "0 0 0 2px rgba(57,120,197,.16)" : "0 1px 2px rgba(25,35,45,.08)"
+                        }}
+                    >
+                        <input
+                            aria-label="Deformation scale"
+                            value={deformationScaleText}
+                            onClick={(event) => event.stopPropagation()}
+                            onFocus={() => setIsScaleOpen(true)}
+                            onChange={(event) => setDeformationScaleText(event.target.value)}
+                            onBlur={() => commitDeformationScale(Number(deformationScaleText))}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                    commitDeformationScale(Number(deformationScaleText));
+                                    event.currentTarget.blur();
+                                }
+                            }}
+                            style={{ width: 35, marginLeft: 5, padding: 0, border: 0, outline: 0, textAlign: "right", background: "transparent", color: "#26313d", font: "600 12px Arial" }}
+                        />
+                        <span style={{ width: 28, textAlign: "center", color: "#5e6975", fontSize: 10 }}>x ▾</span>
+                    </div>
+                    {isScaleOpen && (
+                        <div style={{
+                            position: "absolute", top: 29, right: 0, zIndex: 60, width: 173,
+                            boxSizing: "border-box", padding: "4px 6px", background: "#fff", border: "1px solid #a2abb5", borderRadius: 7,
+                            boxShadow: "0 8px 22px rgba(28,38,50,.24)"
+                        }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 3, color: "#59636f", fontSize: 9 }}>
+                                <span style={{ fontWeight: 600 }}>Scale</span>
+                                <span>1x</span>
+                                <input
+                                    type="range" min="1" max="100" step="1" value={deformationScale}
+                                    onChange={(event) => commitDeformationScale(Number(event.target.value))}
+                                    style={{ width: 86, minWidth: 0, margin: 0 }}
+                                />
+                                <span>100x</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+            <div ref={containerRef} style={{ flex: 1, minHeight: 0, position: "relative", background }}>
             <div 
                 className="fea-vertical-toolbar"
                 style={{
@@ -910,6 +1355,7 @@ export default function Scene({
                         <path d="M6 12h12" />
                     </svg>
                 </button>
+            </div>
             </div>
         </div>
     );

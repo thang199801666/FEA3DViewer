@@ -35,6 +35,62 @@ function edgeKey(u, v) {
     return u < v ? `${u}_${v}` : `${v}_${u}`;
 }
 
+const ELEMENT_SHAPES = {
+    line: { corners: 2, edges: [[0, 1]], faces: [] },
+    triangle: { corners: 3, edges: [[0, 1], [1, 2], [2, 0]], faces: [[0, 1, 2]] },
+    quad: { corners: 4, edges: [[0, 1], [1, 2], [2, 3], [3, 0]], faces: [[0, 1, 2, 3]] },
+    tetra: { corners: 4, edges: [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]], faces: [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]] },
+    hexa: { corners: 8, edges: [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]], faces: [[0,3,2,1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]] },
+    voxel: { corners: 8, edges: [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]], faces: [[0,2,3,1],[4,5,7,6],[0,1,5,4],[1,3,7,5],[3,2,6,7],[2,0,4,6]] },
+    wedge: { corners: 6, edges: [[0,1],[1,2],[2,0],[3,4],[4,5],[5,3],[0,3],[1,4],[2,5]], faces: [[0,1,2],[3,5,4],[0,3,4,1],[1,4,5,2],[2,5,3,0]] },
+    pyramid: { corners: 5, edges: [[0,1],[1,2],[2,3],[3,0],[0,4],[1,4],[2,4],[3,4]], faces: [[0,3,2,1],[0,1,4],[1,2,4],[2,3,4],[3,0,4]] },
+};
+
+function elementShape(type, count) {
+    if (type === 1 || type === 2) return { corners: count, edges: [], faces: [] };
+    if ([3, 21, 35, 60, 68, 75].includes(type)) return ELEMENT_SHAPES.line;
+    if (type === 4) return { corners: count, edges: Array.from({ length: Math.max(0, count - 1) }, (_, i) => [i, i + 1]), faces: [] };
+    if ([5, 22, 34, 61, 69, 76].includes(type)) return ELEMENT_SHAPES.triangle;
+    if (type === 6) return null;
+    if (type === 7 || type === 36) return { corners: type === 36 ? count >> 1 : count, edges: [], faces: [] };
+    if (type === 8) return { ...ELEMENT_SHAPES.quad, edges: [[0,1],[1,3],[3,2],[2,0]], faces: [[0,1,3,2]] };
+    if ([9, 23, 28, 30, 62, 70, 77].includes(type)) return ELEMENT_SHAPES.quad;
+    if ([10, 24, 64, 71, 78].includes(type)) return ELEMENT_SHAPES.tetra;
+    if (type === 11) return ELEMENT_SHAPES.voxel;
+    if ([12, 25, 29, 33, 67, 72, 79].includes(type)) return ELEMENT_SHAPES.hexa;
+    if ([13, 26, 31, 32, 65, 73, 80].includes(type)) return ELEMENT_SHAPES.wedge;
+    if ([14, 27, 37, 66, 74, 81].includes(type)) return ELEMENT_SHAPES.pyramid;
+    return null;
+}
+
+function inferredOrder(type, count, shape) {
+    if ([21,22,23,24,25,26,27,28,30,31,32,33,34].includes(type)) return 2;
+    if (type === 35) return 3;
+    if ([60,68,75].includes(type)) return Math.max(1, count - 1);
+    if ([61,69,76].includes(type)) {
+        const p = Math.round((Math.sqrt(8 * count + 1) - 3) / 2);
+        return (p + 1) * (p + 2) / 2 === count ? p : 1;
+    }
+    if ([62,70,77].includes(type)) {
+        const p = Math.round(Math.sqrt(count) - 1);
+        return (p + 1) ** 2 === count ? p : 1;
+    }
+    if ([64,71,78].includes(type)) {
+        for (let p = 1; p < 20; p++) if ((p + 1) * (p + 2) * (p + 3) / 6 === count) return p;
+    }
+    if ([67,72,79].includes(type)) {
+        const p = Math.round(Math.cbrt(count) - 1);
+        if ((p + 1) ** 3 === count) return p;
+    }
+    if ([65,73,80].includes(type)) {
+        for (let p = 1; p < 20; p++) if ((p + 1) ** 2 * (p + 2) / 2 === count) return p;
+    }
+    if ([66,74,81].includes(type)) {
+        for (let p = 1; p < 20; p++) if ((p + 1) * (p + 2) * (2 * p + 3) / 6 === count) return p;
+    }
+    return count >= shape.corners + shape.edges.length ? 2 : 1;
+}
+
 /** Builds a simple spatial hash to weld coincident or near-coincident vertices. */
 function buildWeldMap(posAttr, tolerance) {
     const n = posAttr.count;
@@ -104,7 +160,10 @@ export class ActorTopology {
         // ---- triRaw: raw vertex indices, directly indexing the position attribute ----
         const index = geometry.getIndex();
         let triRaw;
-        if (index) {
+        const isSurface = geometry.userData?.primitiveType !== "line" && geometry.userData?.primitiveType !== "point";
+        if (!isSurface) {
+            triRaw = new Uint32Array(0);
+        } else if (index) {
             triRaw = index.array instanceof Uint32Array
                 ? index.array.slice()
                 : Uint32Array.from(index.array);
@@ -183,7 +242,9 @@ export class ActorTopology {
         // external shell, while mapper.input still contains every emitted face
         // of each volume cell. Keeping raw point indices here lets Element mode
         // highlight the complete original cell instead of one render triangle.
-        this.elementTriangles = this._buildSourceElementTriangles();
+        this.elements = this._buildSourceElements();
+        this.elementTriangles = new Map();
+        for (const [id, element] of this.elements) this.elementTriangles.set(id, element.triangles);
 
         // Part selection uses only geometric boundary/feature edges. Coplanar
         // mesh subdivisions are intentionally excluded.
@@ -247,6 +308,7 @@ export class ActorTopology {
 
     trianglesOfCell(cellId) { return this.cellTris.get(cellId) ?? []; }
     rawTrianglesOfCell(cellId) { return this.elementTriangles.get(cellId) ?? null; }
+    elementOfCell(cellId) { return this.elements.get(cellId) ?? null; }
     trianglesOfSurface(surfaceId) { return this.surfaces.get(surfaceId) ?? []; }
 
     surfaceEntries() { return Array.from(this.surfaces.entries()); }
@@ -360,8 +422,60 @@ export class ActorTopology {
         return surfaceIds;
     }
 
-    _buildSourceElementTriangles() {
+    _buildSourceElements() {
         const pd = this.actor?.mapper?.input;
+        const sourceCells = pd?.userData?.sourceCells;
+        const sourceTypes = pd?.userData?.sourceCellTypes;
+        if (sourceCells && sourceTypes) {
+            const elements = new Map();
+            const n = Math.min(sourceCells.length, sourceTypes.length);
+            for (let cellId = 0; cellId < n; cellId++) {
+                const conn = Array.from(sourceCells.getCell(cellId));
+                const type = sourceTypes[cellId];
+                const shape = elementShape(type, conn.length);
+                if (!shape) continue;
+
+                if (type === 1 || type === 2) {
+                    elements.set(cellId, { triangles: [], edges: [], points: conn, type });
+                    continue;
+                }
+
+                if (type === 7 || type === 36) {
+                    shape.edges = Array.from({ length: shape.corners }, (_, i) => [i, (i + 1) % shape.corners]);
+                    shape.faces = [Array.from({ length: shape.corners }, (_, i) => i)];
+                }
+
+                const triangles = [];
+                for (const face of shape.faces) {
+                    for (let i = 1; i + 1 < face.length; i++) {
+                        triangles.push(conn[face[0]], conn[face[i]], conn[face[i + 1]]);
+                    }
+                }
+
+                const order = inferredOrder(type, conn.length, shape);
+                const internalPerEdge = Math.max(0, order - 1);
+                const hasEdgeNodes = conn.length >= shape.corners + shape.edges.length * internalPerEdge;
+                const partialQuadratic = type === 30
+                    ? [[4], [], [5], []]
+                    : type === 31
+                    ? [[6], [7], [8], [9], [10], [11], [], [], []]
+                    : null;
+                const edges = shape.edges.map(([a, b], edgeId) => {
+                    const chain = [conn[a]];
+                    if (partialQuadratic) {
+                        for (const local of partialQuadratic[edgeId] ?? []) chain.push(conn[local]);
+                    } else if (hasEdgeNodes) {
+                        const start = shape.corners + edgeId * internalPerEdge;
+                        for (let j = 0; j < internalPerEdge; j++) chain.push(conn[start + j]);
+                    }
+                    chain.push(conn[b]);
+                    return chain;
+                });
+                elements.set(cellId, { triangles, edges, points: conn, type });
+            }
+            return elements;
+        }
+
         const polys = pd?.polys;
         if (!polys) return new Map();
 
@@ -395,7 +509,11 @@ export class ActorTopology {
                 stripId++;
             }
         }
-        return groups;
+        const elements = new Map();
+        for (const [id, triangles] of groups) {
+            elements.set(id, { triangles, edges: [], points: [...new Set(triangles)], type: null });
+        }
+        return elements;
     }
 
     _buildFeatureEdgePositions(featureAngleDeg) {

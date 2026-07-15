@@ -274,6 +274,38 @@ export class Actor extends THREE.Group {
         return this.setScalarVisibility(!this._scalarVisible);
     }
 
+    setOpacity(value) {
+        const opacity = THREE.MathUtils.clamp(Number(value), 0, 1);
+        this.userData.actorOpacity = opacity;
+        const allMaterials = new Set([
+            this._surfaceLitMaterial,
+            this._surfaceUnlitMaterial,
+            this._featureEdgeMaterial,
+            this._wireframeFlatMaterial,
+            this._wireframeVertexColorMaterial,
+            this._wireframeTextureMaterial,
+        ].filter(Boolean));
+        this.traverse((object) => {
+            const materials = Array.isArray(object.material) ? object.material : [object.material];
+            for (const material of materials) if (material) allMaterials.add(material);
+        });
+        for (const material of allMaterials) {
+            material.opacity = opacity;
+            material.transparent = opacity < 1;
+            // Keep the nearest exterior surface in the depth buffer while
+            // translucent. Without this, back/internal triangles blend in
+            // arbitrary draw order and appear as cross-section-like slices.
+            material.depthWrite = opacity > 0;
+            if ("forceSinglePass" in material) material.forceSinglePass = true;
+            material.needsUpdate = true;
+        }
+        return this;
+    }
+
+    getOpacity() {
+        return this.userData.actorOpacity ?? this.surface?.material?.opacity ?? 1;
+    }
+
     hasActiveScalarColoring() {
         return this._scalarVisible && (!!this._scalarTexture || this._hasVertexColors);
     }

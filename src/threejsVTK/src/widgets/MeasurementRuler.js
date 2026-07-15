@@ -17,7 +17,12 @@ export class MeasurementRulerActor {
 
     // Isolated overlay scene and static 2D camera mapping to screen pixels
     this.scene = new THREE.Scene();
+    // Public visibility facade used by Scene, consistent with other widgets.
+    this.group = this.scene;
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+    // The ruler is rendered in an isolated overlay scene; accept whichever
+    // viewport layer Scene assigns to its objects.
+    this.camera.layers.enableAll();
     this.camera.position.set(0, 0, 5);
     this.camera.lookAt(0, 0, 0);
 
@@ -51,9 +56,25 @@ export class MeasurementRulerActor {
     this.camera.bottom = -halfHeight;
     this.camera.updateProjectionMatrix();
 
-    // 2. Map pixel spacing to main camera zoom scale
-    const totalWorldWidth = (mainCamera.right - mainCamera.left) / mainCamera.zoom;
-    const unitsPerPixel = totalWorldWidth / containerWidth;
+    // 2. World scale at the focal plane. Orthographic uses parallel scale;
+    // perspective uses VTK's viewAngle and camera-to-focal-point distance.
+    let unitsPerPixel;
+    if (mainCamera.isPerspectiveCamera) {
+      const target = mainCamera.userData?.focalPoint;
+      const focalDistance = target?.isVector3
+        ? mainCamera.position.distanceTo(target)
+        : (mainCamera.userData?.focalDistance ?? 1);
+      const visibleHeight = 2 * Math.max(focalDistance, 1e-6)
+        * Math.tan(THREE.MathUtils.degToRad(mainCamera.fov) / 2);
+      unitsPerPixel = visibleHeight / containerHeight;
+    } else if (mainCamera.isOrthographicCamera) {
+      const totalWorldWidth = (mainCamera.right - mainCamera.left) / mainCamera.zoom;
+      unitsPerPixel = totalWorldWidth / containerWidth;
+    } else {
+      return;
+    }
+
+    if (!Number.isFinite(unitsPerPixel) || unitsPerPixel <= 0) return;
 
     const targetWorldUnits = this.targetPixelWidth * unitsPerPixel;
     const niceWorldUnits = this._getNiceNumber(targetWorldUnits);
@@ -117,6 +138,7 @@ export class MeasurementRulerActor {
   }
 
   render() {
+    if (!this.group.visible) return;
     const renderer = this.renderer;
     const pr = renderer.getPixelRatio();
     const w = renderer.domElement.clientWidth;

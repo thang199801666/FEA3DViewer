@@ -60,7 +60,7 @@ export class Picker {
             worldPosition: hit.point.clone(),
             distance: hit.distance,
             faceIndex: hit.faceIndex ?? null,
-            cellId: this._cellId(hit.object, hit.faceIndex),
+            cellId: this._cellId(hit.object, hit.faceIndex ?? hit.index),
             pointId: this._pointId(hit.object, localPointIndex),
             localPointIndex: localPointIndex
         };
@@ -92,7 +92,8 @@ export class Picker {
     _cellId(object, faceIndex) {
         if (faceIndex == null) return null;
         const map = object.geometry?.userData?.cellMap;
-        return map ? map[faceIndex] : faceIndex;
+        const primitiveIndex = object.isLineSegments ? Math.floor(faceIndex / 2) : faceIndex;
+        return map ? map[primitiveIndex] : primitiveIndex;
     }
 
     _pointId(object, vertexIndex) {
@@ -103,7 +104,17 @@ export class Picker {
 
     _nearestVertexIndex(hit) {
         const pos = hit.object.geometry?.attributes?.position;
-        if (!hit.face || !pos) return null;
+        if (!pos) return null;
+        if (!hit.face) {
+            if (hit.object.isPoints) return hit.index ?? null;
+            if (hit.object.isLineSegments && hit.index != null) {
+                const a = hit.index, b = Math.min(a + 1, pos.count - 1);
+                _va.fromBufferAttribute(pos, a).applyMatrix4(hit.object.matrixWorld);
+                _vb.fromBufferAttribute(pos, b).applyMatrix4(hit.object.matrixWorld);
+                return hit.point.distanceToSquared(_va) <= hit.point.distanceToSquared(_vb) ? a : b;
+            }
+            return null;
+        }
         const { a, b, c } = hit.face;
         const m = hit.object.matrixWorld;
         _va.fromBufferAttribute(pos, a).applyMatrix4(m);

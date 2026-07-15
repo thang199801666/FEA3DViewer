@@ -72,12 +72,19 @@ export class Camera {
         if (this.type === newType) return this;
 
         const oldThree = this.three;
+        // Keep the focal point as the source of truth.  Merely copying the eye
+        // position changes the apparent scale when crossing projection modes.
+        const target = this.state.target.clone();
         let aspect = 1;
+        let visibleHeight;
         
         if (oldThree.isPerspectiveCamera) {
             aspect = oldThree.aspect;
+            const distance = Math.max(oldThree.position.distanceTo(target), 1e-6);
+            visibleHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(oldThree.fov) / 2);
         } else if (oldThree.isOrthographicCamera) {
             aspect = (oldThree.right - oldThree.left) / (oldThree.top - oldThree.bottom);
+            visibleHeight = (oldThree.top - oldThree.bottom) / Math.max(oldThree.zoom, 1e-12);
         }
 
         // Create the new camera instance.
@@ -85,8 +92,27 @@ export class Camera {
         this.three = this._createThreeCamera(newType, { aspect });
 
         // Copy spatial state from the previous camera.
-        this.three.position.copy(oldThree.position);
         this.three.quaternion.copy(oldThree.quaternion);
+        this.three.up.copy(oldThree.up);
+        this.three.layers.mask = oldThree.layers.mask;
+
+        if (this.three.isPerspectiveCamera) {
+            // VTK keeps position/focal point stable when toggling parallel
+            // projection. Derive viewAngle from parallelScale instead of
+            // moving the eye, which could otherwise put it inside deep models.
+            const distance = Math.max(oldThree.position.distanceTo(target), 1e-3);
+            this.three.fov = THREE.MathUtils.clamp(
+                THREE.MathUtils.radToDeg(2 * Math.atan(visibleHeight / (2 * distance))),
+                0.01,
+                179
+            );
+            this.three.position.copy(oldThree.position);
+            this.three.updateProjectionMatrix();
+        } else {
+            const baseHeight = this.three.top - this.three.bottom;
+            this.three.zoom = Math.max(baseHeight / Math.max(visibleHeight, 1e-12), 1e-4);
+            this.three.position.copy(oldThree.position);
+        }
         this.three.updateMatrixWorld(true);
 
         // Refresh clipping from the current bounding sphere when available.

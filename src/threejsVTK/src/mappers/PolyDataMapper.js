@@ -113,12 +113,14 @@ export class PolyDataMapper {
             const built = this._buildLinePositions(pd);
             geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
             pointIds = built.pointIds;
+            geometry.userData.cellMap = built.cellIds;
             geometry.userData.primitiveType = "line";
             geometry.userData.isLine = true;
         } else if (hasVerts) {
             const built = this._buildPointPositions(pd);
             geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
             pointIds = built.pointIds;
+            geometry.userData.cellMap = built.cellIds;
             geometry.userData.primitiveType = "point";
             geometry.userData.isPoint = true;
         } else {
@@ -160,9 +162,12 @@ export class PolyDataMapper {
 
         const positions = new Float32Array(segments * 2 * 3);
         const pointIds = new Int32Array(segments * 2);
+        const cellIds = new Int32Array(segments);
         let pw = 0, iw = 0;
         const pts = pd.points;
 
+        let lineId = 0, segmentId = 0;
+        const sourceMap = pd.userData?.lineSourceCellMap;
         for (const line of pd.lines) {
             for (let i = 0; i + 1 < line.length; i++) {
                 const a = line[i], b = line[i + 1];
@@ -174,10 +179,12 @@ export class PolyDataMapper {
                 positions[pw++] = pts[b * 3];
                 positions[pw++] = pts[b * 3 + 1];
                 positions[pw++] = pts[b * 3 + 2];
+                cellIds[segmentId++] = sourceMap ? sourceMap[lineId] : lineId;
             }
+            lineId++;
         }
 
-        return { positions, pointIds };
+        return { positions, pointIds, cellIds };
     }
 
     _buildPointPositions(pd) {
@@ -186,20 +193,25 @@ export class PolyDataMapper {
 
         const positions = new Float32Array(n * 3);
         const pointIds = new Int32Array(n);
+        const cellIds = new Int32Array(n);
         let pw = 0, iw = 0;
         const pts = pd.points;
 
+        let vertId = 0;
+        const sourceMap = pd.userData?.vertSourceCellMap;
         for (const vert of pd.verts) {
             for (let i = 0; i < vert.length; i++) {
                 const id = vert[i];
                 pointIds[iw++] = id;
+                cellIds[iw - 1] = sourceMap ? sourceMap[vertId] : vertId;
                 positions[pw++] = pts[id * 3];
                 positions[pw++] = pts[id * 3 + 1];
                 positions[pw++] = pts[id * 3 + 2];
             }
+            vertId++;
         }
 
-        return { positions, pointIds };
+        return { positions, pointIds, cellIds };
     }
 
     _buildTriangleCellMap(pd) {

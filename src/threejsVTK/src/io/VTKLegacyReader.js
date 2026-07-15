@@ -681,11 +681,17 @@ export class VTKLegacyReader {
 
     _convertUnstructured(pd, cells, types) {
         if (!cells) return;
+        // Preserve the complete source topology for element picking/highlight.
+        // Render conversion below may intentionally keep only corner nodes,
+        // but higher-order connectivity must remain available to interaction.
+        pd.userData = pd.userData || {};
+        pd.userData.sourceCells = cells.clone();
+        pd.userData.sourceCellTypes = Int32Array.from(types);
         // Accumulated locally and committed to pd once at the end via the
         // CellArray-backed setVerts/setLines/setPolys/setStrips — pd.polys
         // etc. are now typed-array-backed CellArrays and no longer support
         // incremental .push() the way a plain JS array did.
-        const out = { verts: [], lines: [], polys: [], strips: [], polySourceCellMap: [], stripSourceCellMap: [] };
+        const out = { verts: [], lines: [], polys: [], strips: [], vertSourceCellMap: [], lineSourceCellMap: [], polySourceCellMap: [], stripSourceCellMap: [] };
 
         for (let i = 0; i < types.length; i++) {
             const c = cells.getCell(i);
@@ -733,6 +739,8 @@ export class VTKLegacyReader {
             while (out.polySourceCellMap.length < out.polys.length) {
                 out.polySourceCellMap.push(i);
             }
+            while (out.vertSourceCellMap.length < out.verts.length) out.vertSourceCellMap.push(i);
+            while (out.lineSourceCellMap.length < out.lines.length) out.lineSourceCellMap.push(i);
             while (out.stripSourceCellMap.length < out.strips.length) {
                 out.stripSourceCellMap.push(i);
             }
@@ -742,9 +750,10 @@ export class VTKLegacyReader {
         if (out.lines.length) pd.setLines(out.lines);
         if (out.polys.length) pd.setPolys(out.polys);
         if (out.strips.length) pd.setStrips(out.strips);
-        pd.userData = pd.userData || {};
         if (out.polySourceCellMap.length) pd.userData.polySourceCellMap = Int32Array.from(out.polySourceCellMap);
         if (out.stripSourceCellMap.length) pd.userData.stripSourceCellMap = Int32Array.from(out.stripSourceCellMap);
+        if (out.vertSourceCellMap.length) pd.userData.vertSourceCellMap = Int32Array.from(out.vertSourceCellMap);
+        if (out.lineSourceCellMap.length) pd.userData.lineSourceCellMap = Int32Array.from(out.lineSourceCellMap);
     }
 
     _emitTetra(out, v) {

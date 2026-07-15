@@ -9,6 +9,16 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
     const [isResizing, setIsResizing] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const containerRef = useRef(null);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [activeActor, setActiveActor] = useState<any>(null);
+
+    useEffect(() => {
+        setSelectedIds((ids) => ids.filter((id) => {
+            let found = false;
+            sceneController?.scene?.traverse?.((object: any) => { if (object?.isActor && object.uuid === id) found = true; });
+            return found;
+        }));
+    }, [sceneController, sceneVersion]);
 
     useEffect(() => {
         if (!isResizing) return;
@@ -50,7 +60,9 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
         >
             {/* Model tree area using state-driven height */}
             <div style={{ height: `${treeHeight}px`, overflowY: "auto", flexShrink: 0 }}>
-                <ModelTree sceneController={sceneController} sceneVersion={sceneVersion} theme={theme} />
+                <ModelTree sceneController={sceneController} sceneVersion={sceneVersion} theme={theme}
+                    selectedIds={selectedIds}
+                    onSelectionChange={(ids, actor) => { setSelectedIds(ids); setActiveActor(actor); }} />
             </div>
             
             {/* Vertical splitter between the model tree and property panel */}
@@ -108,7 +120,10 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
 
             {/* Property panel area fills the remaining lower space */}
             <div style={{ flex: 1, overflowY: "auto", backgroundColor: isDark ? "#151515" : "#eaeaea" }}>
-                <PropertyPanel theme={theme} />
+                <PropertyPanel theme={theme} actor={activeActor} onOpacityChange={(opacity) => {
+                    activeActor?.setOpacity?.(opacity);
+                    sceneController?.requestRender?.();
+                }} />
             </div>
         </div>
     );

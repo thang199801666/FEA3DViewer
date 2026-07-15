@@ -58,6 +58,19 @@ export default function MainLayout() {
         setSceneVersion((v) => v + 1);
     }, []);
 
+    const resetApplication = useCallback(() => {
+        setSettings(createDefaultSettings());
+        setMeasurementMode(null);
+        setIsSettingsOpen(false);
+        setContextMenu({ isOpen: false, x: 0, y: 0 });
+        currentWidthRef.current = 290;
+        if (sidebarRef.current) sidebarRef.current.style.width = "290px";
+        if (sceneContainerRef.current) sceneContainerRef.current.style.width = "calc(100% - 290px)";
+        sceneController1?.resetView?.();
+        sceneController2?.resetView?.();
+        setSceneVersion((version) => version + 1);
+    }, [sceneController1, sceneController2]);
+
     // Apply the active display mode to every actor whenever it changes.
     useEffect(() => {
         const scene = sceneController1?.scene || sceneController2?.scene || sharedSceneRef.current;
@@ -235,6 +248,7 @@ export default function MainLayout() {
                     sceneController2?.clearMeasurements?.();
                 }}
                 onOpenSettings={() => setIsSettingsOpen(true)}
+                onResetApp={resetApplication}
             />
 
             <div
