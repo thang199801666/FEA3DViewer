@@ -145,6 +145,8 @@ function computeSurface(grid, passCellData) {
 
     out.userData = out.userData || {};
     out.userData.surfaceCellMap = [...surfacePolys, ...surfaceStrips].map(p => p.srcCell);
+    out.userData.polySourceCellMap = Int32Array.from(surfacePolys.map(p => p.srcCell));
+    out.userData.stripSourceCellMap = Int32Array.from(surfaceStrips.map(p => p.srcCell));
 
     for (const a of grid.pointData.arrays.values()) {
         out.pointData.addArray(a.clone(), {

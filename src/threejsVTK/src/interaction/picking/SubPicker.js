@@ -18,6 +18,52 @@ function distToSegment(px, py, ax, ay, bx, by) {
     return { dist: Math.hypot(px - cx, py - cy), t };
 }
 
+function pointInRect(p, l, t, r, b) {
+    return p.x >= l && p.x <= r && p.y >= t && p.y <= b;
+}
+
+function segmentIntersectsRect(a, b, l, t, r, bottom) {
+    if (pointInRect(a, l, t, r, bottom) || pointInRect(b, l, t, r, bottom)) return true;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    let lo = 0, hi = 1;
+    const p = [-dx, dx, -dy, dy];
+    const q = [a.x - l, r - a.x, a.y - t, bottom - a.y];
+    for (let i = 0; i < 4; i++) {
+        if (Math.abs(p[i]) < 1e-12) {
+            if (q[i] < 0) return false;
+            continue;
+        }
+        const u = q[i] / p[i];
+        if (p[i] < 0) lo = Math.max(lo, u);
+        else hi = Math.min(hi, u);
+        if (lo > hi) return false;
+    }
+    return true;
+}
+
+function pointInTriangle(p, a, b, c) {
+    const sign = (p0, p1, p2) =>
+        (p0.x - p2.x) * (p1.y - p2.y) - (p1.x - p2.x) * (p0.y - p2.y);
+    const area2 = sign(a, b, c);
+    if (Math.abs(area2) < 1e-9) return false;
+    const d1 = sign(p, a, b), d2 = sign(p, b, c), d3 = sign(p, c, a);
+    const eps = 1e-9;
+    const hasNeg = d1 < -eps || d2 < -eps || d3 < -eps;
+    const hasPos = d1 > eps || d2 > eps || d3 > eps;
+    return !(hasNeg && hasPos);
+}
+
+function triangleIntersectsRect(a, b, c, l, t, r, bottom) {
+    if (pointInRect(a, l, t, r, bottom) || pointInRect(b, l, t, r, bottom) || pointInRect(c, l, t, r, bottom)) return true;
+    if (segmentIntersectsRect(a, b, l, t, r, bottom) ||
+        segmentIntersectsRect(b, c, l, t, r, bottom) ||
+        segmentIntersectsRect(c, a, l, t, r, bottom)) return true;
+    return pointInTriangle({ x: l, y: t }, a, b, c) ||
+        pointInTriangle({ x: r, y: t }, a, b, c) ||
+        pointInTriangle({ x: r, y: bottom }, a, b, c) ||
+        pointInTriangle({ x: l, y: bottom }, a, b, c);
+}
+
 export class SubPicker {
     /**
      * @param {object} o
@@ -149,7 +195,7 @@ export class SubPicker {
                 return this._pickEdge(clientX, clientY, actors);
 
             case PickMode.POINT:
-                return this._pickVertexLike(clientX, clientY, actors, true);
+                return null;
 
             case PickMode.NODE:
                 return this._pickVertexLike(clientX, clientY, actors, false);
@@ -262,9 +308,7 @@ export class SubPicker {
             const inv = new THREE.Matrix4().copy(actor.matrixWorld).invert();
 
             let candidates;
-            if (isCorner) {
-                candidates = topo.corners.map((c) => c.welded);
-            } else if (anchor) {
+            if (anchor) {
                 const localAnchor = _v3.copy(anchor).applyMatrix4(inv);
                 const rWorld = tol * 2 * this._worldPerPixel(anchor);
                 const scale = actor.getWorldScale(_v3b).x || 1;
@@ -290,7 +334,7 @@ export class SubPicker {
         if (!best || this._occluded(best.point, actors)) return null;
 
         const mode = isCorner ? PickMode.POINT : PickMode.NODE;
-        const id = isCorner ? best.topo.weldedToCorner.get(best.welded) : best.topo.nodeOf(best.welded);
+        const id = isCorner ? best.welded : best.topo.nodeOfWelded(best.welded);
 
         return {
             mode,
@@ -322,18 +366,42 @@ export class SubPicker {
         const s2 = new THREE.Vector2();
         const wp = new THREE.Vector3();
 
-        const inside = (p) => p.x >= rL && p.x <= rR && p.y >= rT && p.y <= rB;
+        const projectRaw = (actor, topo, rawId, out) => {
+            wp.fromBufferAttribute(topo.corners, rawId).applyMatrix4(actor.matrixWorld);
+            const projected = this._toScreen(wp, out);
+            return projected ? out : null;
+        };
 
-        const test = (actor, points) => {
-            let any = false, all = true;
-            for (const p of points) {
-                wp.copy(p).applyMatrix4(actor.matrixWorld);
-                const s = this._toScreen(wp, s2);
-                if (!s || !inside(s)) { all = false; if (!crossing) return false; }
-                else any = true;
-                if (crossing && any) return true;
+        const triangleGroupHit = (actor, topo, renderTris, rawTris = null) => {
+            if (!crossing) {
+                const ids = new Set();
+                if (rawTris) {
+                    for (const raw of rawTris) ids.add(raw);
+                } else {
+                    for (const triId of renderTris) {
+                        const o = triId * 3;
+                        ids.add(topo.triRaw[o]); ids.add(topo.triRaw[o + 1]); ids.add(topo.triRaw[o + 2]);
+                    }
+                }
+                if (!ids.size) return false;
+                for (const raw of ids) {
+                    const p = projectRaw(actor, topo, raw, s2);
+                    if (!p || !pointInRect(p, rL, rT, rR, rB)) return false;
+                }
+                return true;
             }
-            return crossing ? any : all;
+
+            const a = new THREE.Vector2(), b = new THREE.Vector2(), c = new THREE.Vector2();
+            const count = rawTris ? rawTris.length / 3 : renderTris.length;
+            for (let i = 0; i < count; i++) {
+                const o = rawTris ? i * 3 : renderTris[i] * 3;
+                const ia = rawTris ? rawTris[o] : topo.triRaw[o];
+                const ib = rawTris ? rawTris[o + 1] : topo.triRaw[o + 1];
+                const ic = rawTris ? rawTris[o + 2] : topo.triRaw[o + 2];
+                if (!projectRaw(actor, topo, ia, a) || !projectRaw(actor, topo, ib, b) || !projectRaw(actor, topo, ic, c)) continue;
+                if (triangleIntersectsRect(a, b, c, rL, rT, rR, rB)) return true;
+            }
+            return false;
         };
 
         for (const actor of actors) {
@@ -345,22 +413,20 @@ export class SubPicker {
 
             switch (mode) {
                 case PickMode.PART:
-                    out.push({ mode, actor, id: actor.uuid, key: pickKey(actor, mode, actor.uuid), point: null, tri: null });
+                    if (triangleGroupHit(actor, topo, Array.from({ length: topo.triCount }, (_, i) => i))) {
+                        out.push({ mode, actor, id: actor.uuid, key: pickKey(actor, mode, actor.uuid), point: null, tri: null });
+                    }
                     break;
 
                 case PickMode.SURFACE:
                 case PickMode.ELEMENT: {
                     const groups = mode === PickMode.SURFACE
-                        ? topo.surfaces.map((s) => [s.id, s.tris])
+                        ? topo.surfaceEntries()
                         : Array.from(topo.cellTris.entries());
 
                     for (const [id, tris] of groups) {
-                        const pts = [];
-                        for (let i = 0; i < tris.length; i++) {
-                            const o = tris[i] * 3;
-                            pts.push(new THREE.Vector3(topo.triCentroid[o], topo.triCentroid[o + 1], topo.triCentroid[o + 2]));
-                        }
-                        if (test(actor, pts)) {
+                        const rawTris = mode === PickMode.ELEMENT ? topo.rawTrianglesOfCell(id) : null;
+                        if (triangleGroupHit(actor, topo, tris, rawTris)) {
                             out.push({ mode, actor, id, key: pickKey(actor, mode, id), point: null, tri: null });
                         }
                     }
@@ -368,21 +434,27 @@ export class SubPicker {
                 }
 
                 case PickMode.EDGE:
-                    for (const chain of topo.chains) {
-                        const pts = [];
-                        for (let i = 0; i < chain.verts.length; i++) {
-                            pts.push(new THREE.Vector3(chain.positions[i * 3], chain.positions[i * 3 + 1], chain.positions[i * 3 + 2]));
-                        }
-                        if (test(actor, pts)) {
-                            out.push({ mode, actor, id: chain.id, key: pickKey(actor, mode, chain.id), point: null, tri: null });
+                    for (const [edgeId, chain] of topo.chains instanceof Map ? topo.chains.entries() : topo.chains.map((c) => [c.id, c])) {
+                        const a = new THREE.Vector2(), b = new THREE.Vector2();
+                        wp.fromArray(chain.positions, 0).applyMatrix4(actor.matrixWorld);
+                        if (!this._toScreen(wp, a)) continue;
+                        wp.fromArray(chain.positions, 3).applyMatrix4(actor.matrixWorld);
+                        if (!this._toScreen(wp, b)) continue;
+                        const hit = crossing
+                            ? segmentIntersectsRect(a, b, rL, rT, rR, rB)
+                            : pointInRect(a, rL, rT, rR, rB) && pointInRect(b, rL, rT, rR, rB);
+                        if (hit) {
+                            out.push({ mode, actor, id: edgeId, key: pickKey(actor, mode, edgeId), point: null, tri: null });
                         }
                     }
                     break;
 
                 case PickMode.POINT:
-                    for (const c of topo.corners) {
-                        if (test(actor, [c.pos])) {
-                            out.push({ mode, actor, id: c.id, key: pickKey(actor, mode, c.id), point: null, tri: null });
+                    for (let w = 0; w < topo.wcount; w++) {
+                        topo.weldedPosition(w, wp).applyMatrix4(actor.matrixWorld);
+                        const s = this._toScreen(wp, s2);
+                        if (s && pointInRect(s, rL, rT, rR, rB)) {
+                            out.push({ mode, actor, id: w, welded: w, key: pickKey(actor, mode, w), point: null, tri: null });
                         }
                     }
                     break;
@@ -391,8 +463,8 @@ export class SubPicker {
                     for (let w = 0; w < topo.wcount; w++) {
                         topo.weldedPosition(w, wp).applyMatrix4(actor.matrixWorld);
                         const s = this._toScreen(wp, s2);
-                        if (s && inside(s)) {
-                            const id = topo.nodeOf(w);
+                        if (s && pointInRect(s, rL, rT, rR, rB)) {
+                            const id = topo.nodeOfWelded(w);
                             out.push({ mode, actor, id, welded: w, key: pickKey(actor, mode, id), point: null, tri: null });
                         }
                     }

@@ -1,5 +1,4 @@
 export default function StatusBar({ 
-    sceneController, 
     theme, 
     onThemeChange,
     mouseStyle = "Blender",
@@ -72,7 +71,7 @@ export default function StatusBar({
                     >
                         <option value="Part">Part</option>
                         <option value="Surface">Surface</option>
-                        <option value="Point">Point</option>
+                        <option value="Point" disabled>Point (not implemented)</option>
                         <option value="Element">Element</option>
                         <option value="Node">Node</option>
                     </select>

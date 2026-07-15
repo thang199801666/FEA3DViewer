@@ -41,6 +41,7 @@ export class PolyData extends DataSet {
         this._polys = CellArray.empty();
         this._strips = CellArray.empty();
         this.cells = [];
+        this.userData = {};
         this._triCache = null;   // { mtime, arr } for getTriangles()
         this._polysCache = null; // { mtime, arr } for getPolys()
     }
@@ -135,6 +136,7 @@ export class PolyData extends DataSet {
         out.strips = this._strips.clone();
         out.pointData = this.pointData.clone();
         out.cellData = this.cellData.clone();
+        out.userData = { ...this.userData };
         out.cells = this.cells.map(c => ({
             type: c.type,
             points: [...c.points]

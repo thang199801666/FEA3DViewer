@@ -149,6 +149,11 @@ export default class SceneController {
 
     this.scene.traverse((child) => {
       if (child === this.scene || child.name === "system_grid" || child.isGridHelper) return;
+      let owner = child;
+      while (owner) {
+        if (owner.userData?.isMeasurementOverlay) return;
+        owner = owner.parent;
+      }
       if (child.isMesh) {
         if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
         const b = child.geometry.boundingBox.clone();

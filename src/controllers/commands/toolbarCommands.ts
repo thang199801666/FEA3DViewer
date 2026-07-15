@@ -15,6 +15,8 @@ export type ToolbarCommandId =
     | "display.toggleCameraNav"
     | "display.toggleRuler"
     | "display.toggleNotes"
+    | "measure.setMode"
+    | "measure.clear"
     | "help.about";
 
 export type ToolbarAction = (...args: any[]) => void;
@@ -101,6 +103,14 @@ export const toolbarCommands: Record<ToolbarCommandId, ToolbarCommand> = {
     "display.toggleNotes": {
         id: "display.toggleNotes",
         execute: (context) => runAction(context, "toggleNotes"),
+    },
+    "measure.setMode": {
+        id: "measure.setMode",
+        execute: (context, payload) => runAction(context, "setMeasurementMode", payload),
+    },
+    "measure.clear": {
+        id: "measure.clear",
+        execute: (context) => runAction(context, "clearMeasurements"),
     },
     "help.about": {
         id: "help.about",

@@ -11,6 +11,7 @@ import {
     NavigationCube,
     ScalarBarActor,
     MeasurementRuler,
+    MeasurementTool,
     Camera,
     GridActor,
     AmbientLightActor,
@@ -40,11 +41,12 @@ type ViewDirection = typeof VIEWS[number];
 interface RubberBandSelectionOptions {
     additive: boolean;
     mode: any;
+    rect?: { x: number; y: number; width: number; height: number } | null;
 }
 
-function applyRubberBandSelection(pc: any, selected: any[], { additive, mode }: RubberBandSelectionOptions): boolean {
+function applyRubberBandSelection(pc: any, selected: any[], { additive, mode, rect }: RubberBandSelectionOptions): boolean {
     if (!pc) return false;
-    if (typeof pc.selectObjects === "function") { pc.selectObjects(selected, { additive, mode }); return true; }
+    if (typeof pc.selectObjects === "function") { pc.selectObjects(selected, { additive, mode, rect }); return true; }
     if (typeof pc.setSelection === "function") { pc.setSelection(selected, additive); return true; }
     if (typeof pc.selectActors === "function") { pc.selectActors(selected, additive); return true; }
     if (typeof pc.select === "function") {
@@ -79,6 +81,7 @@ export interface SceneProps {
     ambientIntensity?: number;
     directionalIntensity?: number;
     selectionMode?: string;
+    measurementMode?: "distance" | "angle" | null;
 }
 
 export default function Scene({
@@ -100,7 +103,8 @@ export default function Scene({
     addDefaultLights = false,
     ambientIntensity = 0.5,
     directionalIntensity = 1.0,
-    selectionMode = "Part"
+    selectionMode = "Part",
+    measurementMode = null
 }: SceneProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const textBlockRef = useRef<HTMLDivElement | null>(null);
@@ -159,6 +163,10 @@ export default function Scene({
             sceneControllerRef.current.pickingController.setSelectionMode(selectionMode);
         }
     }, [selectionMode]);
+
+    useEffect(() => {
+        sceneControllerRef.current?.measurementTool?.setMode(measurementMode);
+    }, [measurementMode]);
 
     useEffect(() => {
         if (viewportIndex !== 1 || !sharedScene) return;
@@ -410,8 +418,8 @@ export default function Scene({
                 });
             },
             onRubberBandEnd: () => { rubberBandEl.style.display = "none"; },
-            onRubberBandSelect: (selected: any[], { mode, additive }: RubberBandSelectionOptions) => {
-                applyRubberBandSelection(sceneController.pickingController, selected, { additive, mode });
+            onRubberBandSelect: (selected: any[], { mode, additive, rect }: RubberBandSelectionOptions) => {
+                applyRubberBandSelection(sceneController.pickingController, selected, { additive, mode, rect });
                 sceneController.requestRender?.();
             },
         } as any);
@@ -423,8 +431,18 @@ export default function Scene({
         interactor.initialize();
 
         const pickingController = new AppPickingController(sceneController);
-        pickingController.selectionMode = selectionMode;
+        pickingController.setSelectionMode(selectionMode);
         sceneController.pickingController = pickingController;
+
+        const measurementTool = new MeasurementTool({
+            scene: sharedScene,
+            pickingController,
+            requestRender: () => sceneController.requestRender?.(),
+        });
+        measurementTool.setMode(measurementMode);
+        sceneController.measurementTool = measurementTool;
+        sceneController.setMeasurementMode = (mode: "distance" | "angle" | null) => measurementTool.setMode(mode);
+        sceneController.clearMeasurements = () => measurementTool.clear();
 
         const scalarBar = new ScalarBarActor({
             anchor: "BottomRight", range: [0, 1], numberOfColors: 12, precision: 3,
@@ -527,6 +545,7 @@ export default function Scene({
                 (ruler as any).update(container?.clientWidth ?? 0, container?.clientHeight ?? 0, activeCam);
                 ruler.render();
             }
+            measurementTool.update(activeCam, container?.clientHeight ?? 0);
         }
         animate();
 
@@ -538,6 +557,7 @@ export default function Scene({
             camera.dispose();
             interactor.dispose();
             rubberBandEl.remove();
+            measurementTool.dispose();
             pickingController.dispose();
             textBlockController.dispose();
             ruler.dispose();

@@ -20,13 +20,30 @@ import { PolyData } from "../core/PolyData.js";
 // Six faces: [normal, u axis, v axis] in box coordinates.
 // u x v follows the outward normal, so winding is CCW from outside.
 const FACES = [
-    { n: [ 1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +X
-    { n: [-1, 0, 0], u: [0, 0,  1], v: [0, 1, 0] },   // -X
-    { n: [0,  1, 0], u: [1, 0,  0], v: [0, 0, -1] },  // +Y
-    { n: [0, -1, 0], u: [1, 0,  0], v: [0, 0,  1] },  // -Y
-    { n: [0, 0,  1], u: [1, 0,  0], v: [0, 1,  0] },  // +Z
-    { n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1,  0] },  // -Z
+    { key: "px", n: [ 1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +X
+    { key: "nx", n: [-1, 0, 0], u: [0, 0,  1], v: [0, 1, 0] },   // -X
+    { key: "py", n: [0,  1, 0], u: [1, 0,  0], v: [0, 0, -1] },  // +Y
+    { key: "ny", n: [0, -1, 0], u: [1, 0,  0], v: [0, 0,  1] },  // -Y
+    { key: "pz", n: [0, 0,  1], u: [1, 0,  0], v: [0, 1,  0] },  // +Z
+    { key: "nz", n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1,  0] },  // -Z
 ];
+
+function structuredCellId(faceKey, i, j, n) {
+    let ix = i;
+    let iy = j;
+    let iz = 0;
+
+    switch (faceKey) {
+        case "px": ix = n - 1; iy = j;     iz = n - 1 - i; break;
+        case "nx": ix = 0;     iy = j;     iz = i;         break;
+        case "py": ix = i;     iy = n - 1; iz = n - 1 - j; break;
+        case "ny": ix = i;     iy = 0;     iz = j;         break;
+        case "pz": ix = i;     iy = j;     iz = n - 1;     break;
+        case "nz": ix = n - 1 - i; iy = j; iz = 0;         break;
+    }
+
+    return ix + n * (iy + n * iz);
+}
 
 export class BoxSource {
     /**
@@ -56,6 +73,7 @@ export class BoxSource {
 
         const points = [];
         const polys = [];
+        const polySourceCellMap = [];
 
         for (const face of FACES) {
             const base = points.length / 3;
@@ -82,6 +100,8 @@ export class BoxSource {
                     const c = a + row;
                     const d = c + 1;
                     polys.push([a, b, d], [a, d, c]);
+                    const cellId = structuredCellId(face.key, i, j, n);
+                    polySourceCellMap.push(cellId, cellId);
                 }
             }
         }
@@ -89,6 +109,7 @@ export class BoxSource {
         const pd = new PolyData();
         pd.setPoints(Float32Array.from(points));
         pd.polys = polys;
+        pd.userData.polySourceCellMap = Int32Array.from(polySourceCellMap);
         return pd;
     }
 

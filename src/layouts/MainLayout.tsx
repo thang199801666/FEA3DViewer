@@ -22,6 +22,7 @@ export default function MainLayout() {
     // --- Single source of truth for every app + scene property ---
     const [settings, setSettings] = useState(createDefaultSettings());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [measurementMode, setMeasurementMode] = useState(null);
 
     // Horizontal drag state (Sidebar & Scene splitter).
     const [isDragging, setIsDragging] = useState(false);
@@ -227,6 +228,12 @@ export default function MainLayout() {
                 onToggleRuler={() => toggleSetting("showRuler")}
                 showGrid={settings.showGrid}
                 onToggleGrid={() => toggleSetting("showGrid")}
+                measurementMode={measurementMode}
+                onSetMeasurementMode={setMeasurementMode}
+                onClearMeasurements={() => {
+                    sceneController1?.clearMeasurements?.();
+                    sceneController2?.clearMeasurements?.();
+                }}
                 onOpenSettings={() => setIsSettingsOpen(true)}
             />
 
@@ -363,6 +370,7 @@ export default function MainLayout() {
                             ambientIntensity={settings.ambientIntensity}
                             directionalIntensity={settings.directionalIntensity}
                             selectionMode={settings.selectionMode}
+                            measurementMode={measurementMode}
                         />
                         {settings.isSplit && (
                             <div
@@ -418,6 +426,7 @@ export default function MainLayout() {
                                 ambientIntensity={settings.ambientIntensity}
                                 directionalIntensity={settings.directionalIntensity}
                                 selectionMode={settings.selectionMode}
+                                measurementMode={measurementMode}
                             />
                             <div
                                 style={{
@@ -444,7 +453,6 @@ export default function MainLayout() {
             </div>
 
             <StatusBar
-                sceneController={sceneController1}
                 theme={settings.theme}
                 onThemeChange={(t) => updateSetting("theme", t)}
                 mouseStyle={settings.navStyle}

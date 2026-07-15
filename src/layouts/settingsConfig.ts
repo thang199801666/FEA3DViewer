@@ -3,6 +3,7 @@ export const DEFAULT_SETTINGS = {
     theme: "light",                 // "dark" | "light" | "blue"
     navStyle: "Blender",           // mouse navigation preset (see NAV_STYLE_OPTIONS)
     displayMode: "modelWithEdges", // actor display mode (see DISPLAY_MODE_OPTIONS)
+    selectionMode: "Part",         // entity selection mode in the viewport
     isSplit: false,                // show two viewports side by side
     isViewLinked: false,            // synchronize cameras between viewports
 

@@ -106,6 +106,8 @@ export class PolyDataMapper {
             geometry.setAttribute("position", new THREE.BufferAttribute(pd.points, 3));
             tris = pd.getTriangles();
             if (tris.length > 0) geometry.setIndex(tris);
+            const cellMap = this._buildTriangleCellMap(pd);
+            if (cellMap) geometry.userData.cellMap = cellMap;
             geometry.userData.primitiveType = "surface";
         } else if (hasLines) {
             const built = this._buildLinePositions(pd);
@@ -198,6 +200,40 @@ export class PolyDataMapper {
         }
 
         return { positions, pointIds };
+    }
+
+    _buildTriangleCellMap(pd) {
+        if (!pd?.polys && !pd?.strips) return null;
+
+        let triCount = 0;
+        for (const cell of pd.polys) triCount += Math.max(0, cell.length - 2);
+        for (const strip of pd.strips) triCount += Math.max(0, strip.length - 2);
+        if (!triCount) return null;
+
+        const map = new Int32Array(triCount);
+        const polySource = pd.userData?.polySourceCellMap ?? pd.userData?.surfaceCellMap ?? null;
+        const stripSource = pd.userData?.stripSourceCellMap ?? null;
+        let write = 0;
+        let faceId = 0;
+
+        for (const cell of pd.polys) {
+            const sourceCell = polySource ? polySource[faceId] : faceId;
+            const n = Math.max(0, cell.length - 2);
+            for (let i = 0; i < n; i++) map[write++] = sourceCell;
+            faceId++;
+        }
+
+        let stripId = 0;
+        for (const strip of pd.strips) {
+            const sourceCell = stripSource
+                ? stripSource[stripId]
+                : (pd.userData?.surfaceCellMap ? pd.userData.surfaceCellMap[faceId + stripId] : faceId + stripId);
+            const n = Math.max(0, strip.length - 2);
+            for (let i = 0; i < n; i++) map[write++] = sourceCell;
+            stripId++;
+        }
+
+        return map;
     }
 
     _mapDuplicatedScalars(lut, scalars, pointIds) {

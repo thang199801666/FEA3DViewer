@@ -40,23 +40,30 @@ export function polyDataToGeometry(polyData) {
 
     const idx = new Uint32Array(triCount * 3);
     const cellMap = new Int32Array(triCount);
+    const polySource = polyData.userData?.polySourceCellMap ?? polyData.userData?.surfaceCellMap ?? null;
+    const stripSource = polyData.userData?.stripSourceCellMap ?? null;
     let w = 0, ci = 0, cellId = 0;
 
     for (const cell of polyData.polys) {
+        const sourceCell = polySource ? polySource[cellId] : cellId;
         for (let i = 1; i + 1 < cell.length; i++) {
             idx[w++] = cell[0]; idx[w++] = cell[i]; idx[w++] = cell[i + 1];
-            cellMap[ci++] = cellId;
+            cellMap[ci++] = sourceCell;
         }
         cellId++;
     }
 
+    let stripId = 0;
     for (const strip of polyData.strips) {
+        const sourceCell = stripSource
+            ? stripSource[stripId]
+            : (polyData.userData?.surfaceCellMap ? polyData.userData.surfaceCellMap[cellId + stripId] : cellId + stripId);
         for (let i = 0; i + 2 < strip.length; i++) {
             if (i % 2 === 0) { idx[w++] = strip[i]; idx[w++] = strip[i + 1]; idx[w++] = strip[i + 2]; }
             else { idx[w++] = strip[i + 1]; idx[w++] = strip[i]; idx[w++] = strip[i + 2]; }
-            cellMap[ci++] = cellId;
+            cellMap[ci++] = sourceCell;
         }
-        cellId++;
+        stripId++;
     }
 
     g.setIndex(new THREE.BufferAttribute(idx, 1));

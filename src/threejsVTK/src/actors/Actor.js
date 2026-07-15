@@ -74,7 +74,7 @@ export class Actor extends THREE.Group {
         this.solidColor = new THREE.Color(opts.solidColor ?? 0xcccccc);
 
         this._baseEdgeColor = new THREE.Color(opts.featureEdgeColor ?? 0x000000);
-        this._baseEdgeThickness = opts.featureEdgeThickness ?? 1.2;
+        this._baseEdgeThickness = opts.featureEdgeThickness ?? 1.0;
 
         this._featureEdgeMaterial = new LineMaterial({
             color: opts.featureEdgeColor ?? 0x000000,

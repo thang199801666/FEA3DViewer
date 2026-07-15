@@ -685,7 +685,7 @@ export class VTKLegacyReader {
         // CellArray-backed setVerts/setLines/setPolys/setStrips — pd.polys
         // etc. are now typed-array-backed CellArrays and no longer support
         // incremental .push() the way a plain JS array did.
-        const out = { verts: [], lines: [], polys: [], strips: [] };
+        const out = { verts: [], lines: [], polys: [], strips: [], polySourceCellMap: [], stripSourceCellMap: [] };
 
         for (let i = 0; i < types.length; i++) {
             const c = cells.getCell(i);
@@ -729,12 +729,22 @@ export class VTKLegacyReader {
                 default:
                     console.warn(`VTKLegacyReader: Family "${info.family}" not handled`);
             }
+
+            while (out.polySourceCellMap.length < out.polys.length) {
+                out.polySourceCellMap.push(i);
+            }
+            while (out.stripSourceCellMap.length < out.strips.length) {
+                out.stripSourceCellMap.push(i);
+            }
         }
 
         if (out.verts.length) pd.setVerts(out.verts);
         if (out.lines.length) pd.setLines(out.lines);
         if (out.polys.length) pd.setPolys(out.polys);
         if (out.strips.length) pd.setStrips(out.strips);
+        pd.userData = pd.userData || {};
+        if (out.polySourceCellMap.length) pd.userData.polySourceCellMap = Int32Array.from(out.polySourceCellMap);
+        if (out.stripSourceCellMap.length) pd.userData.stripSourceCellMap = Int32Array.from(out.stripSourceCellMap);
     }
 
     _emitTetra(out, v) {

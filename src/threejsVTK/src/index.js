@@ -64,6 +64,7 @@ export { OrientationTriadActor } from "./widgets/OrientationTriadActor.js";
 // CameraNavigationActor is the preferred export name.
 export { CameraNavigationActor, CameraNavigationActor as NavigationCube } from "./widgets/NavigationCube.js";
 export { MeasurementRulerActor, MeasurementRulerActor as MeasurementRuler } from "./widgets/MeasurementRuler.js";
+export { MeasurementTool, MEASUREMENT_MODE } from "./widgets/MeasurementTool.js";
 
 // ── rendering ───────────────────────────────────────────────────────────────
 export { RenderWindow } from "./rendering/RenderWindow.js";

@@ -99,6 +99,9 @@ interface ToolbarProps {
     onToggleRuler: () => void;
     showGrid: boolean;
     onToggleGrid: () => void;
+    measurementMode?: "distance" | "angle" | null;
+    onSetMeasurementMode?: (mode: "distance" | "angle" | null) => void;
+    onClearMeasurements?: () => void;
     onOpenSettings: () => void;
 }
 
@@ -118,6 +121,9 @@ export default function Toolbar({
     onToggleRuler,
     showGrid,
     onToggleGrid,
+    measurementMode = null,
+    onSetMeasurementMode,
+    onClearMeasurements,
     onOpenSettings  
 }: ToolbarProps) {
     const [activeTab, setActiveTab] = useState<string>("home");
@@ -527,6 +533,9 @@ export default function Toolbar({
         toggleCameraNav: handleToggleCameraNav,
         toggleRuler: onToggleRuler,
         toggleNotes: onToggleTextBlock,
+        setMeasurementMode: (mode: "distance" | "angle") =>
+            onSetMeasurementMode?.(measurementMode === mode ? null : mode),
+        clearMeasurements: onClearMeasurements,
         showAbout: () => alert("FEA Viewer Version 1.0.0"),
     };
 
@@ -575,7 +584,7 @@ export default function Toolbar({
 
             {/* Ribbon Interface Header Tab Switchers */}
             <div className="ribbon-tabs" style={{ display: "flex", gap: "2px", padding: "4px 4px 0 4px" }}>
-                {["home", "modify", "shape", "view", "help"].map((tab) => {
+                {["home", "modify", "shape", "view", "measure", "help"].map((tab) => {
                     const isActive = activeTab === tab;
                     let tabStyle: React.CSSProperties = {
                         background: "transparent",
@@ -813,6 +822,31 @@ export default function Toolbar({
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Display Toggles</div>
                         </div>
                     </>
+                )}
+
+                {activeTab === "measure" && (
+                    <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
+                        <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
+                            <RibbonButton
+                                icon="measureLength" label="Distance" textColor={textColor}
+                                active={measurementMode === "distance"} activeBtnBg={activeBtnBg}
+                                commandId="measure.setMode" commandPayload="distance" onCommand={runCommand}
+                                instruction="Select two entities. Draw a ruler and show their distance at its midpoint."
+                            />
+                            <RibbonButton
+                                icon="measureAngle" label="Angle" textColor={textColor}
+                                active={measurementMode === "angle"} activeBtnBg={activeBtnBg}
+                                commandId="measure.setMode" commandPayload="angle" onCommand={runCommand}
+                                instruction="Select two entities. Measure their face/edge direction angle and draw the result."
+                            />
+                            <RibbonButton
+                                icon="clearBrush" label="Clear" textColor={textColor}
+                                commandId="measure.clear" onCommand={runCommand}
+                                instruction="Remove all measurement annotations from the scene."
+                            />
+                        </div>
+                        <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Measurement</div>
+                    </div>
                 )}
 
                 {/* Support Reference Channels Category */}

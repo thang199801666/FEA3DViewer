@@ -26,6 +26,7 @@ import * as THREE from "three";
 const _va = new THREE.Vector3();
 const _vb = new THREE.Vector3();
 const _vc = new THREE.Vector3();
+const _vd = new THREE.Vector3();
 
 /** Actor cache. Values are rebuilt when geometry.uuid changes, for example after actor.update(). */
 const _cache = new WeakMap();
@@ -83,7 +84,7 @@ function buildWeldMap(posAttr, tolerance) {
 }
 
 export class ActorTopology {
-    constructor(actor, { weldTolerance } = {}) {
+    constructor(actor, { weldTolerance, surfaceFeatureAngle = actor?.featureEdgeAngle ?? 20 } = {}) {
         this.actor = actor;
 
         const mesh = actor.surface;
@@ -147,8 +148,6 @@ export class ActorTopology {
         // ---- cell / surface mapping, matching Picker.js._cellId logic ----
         const cellMap = geometry.userData?.cellMap ?? null;
         const pointMap = geometry.userData?.pointMap ?? null;
-        const surfaceMap = geometry.userData?.surfaceMap ?? null;
-        const groups = geometry.groups && geometry.groups.length ? geometry.groups : null;
 
         this._cellMap = cellMap;
         this._pointMap = pointMap;
@@ -164,21 +163,31 @@ export class ActorTopology {
             const cellId = cellMap ? cellMap[t] : t;
             if (!this.cellTris.has(cellId)) this.cellTris.set(cellId, []);
             this.cellTris.get(cellId).push(t);
+        }
 
-            let surfaceId;
-            if (surfaceMap) {
-                surfaceId = surfaceMap[t];
-            } else if (groups) {
-                const vStart = t * 3;
-                const g = groups.find((gr) => vStart >= gr.start && vStart < gr.start + gr.count);
-                surfaceId = g ? (g.materialIndex ?? 0) : 0;
-            } else {
-                surfaceId = 0; // Actor currently has one surface, so all triangles belong to surface 0.
-            }
+        // A selectable Surface is a geometric feature region, not an input
+        // polygon/cell group. Always grow it across adjacent triangles using
+        // the requested feature angle so it can span the entire model.
+        const generatedSurfaceIds = this._buildFeatureSurfaces(surfaceFeatureAngle);
+
+        for (let t = 0; t < this.triCount; t++) {
+            const surfaceId = generatedSurfaceIds[t] ?? 0;
             this._triSurfaceOf[t] = surfaceId;
-            if (!this.surfaces.has(surfaceId)) this.surfaces.set(surfaceId, []);
+            if (!this.surfaces.has(surfaceId)) {
+                this.surfaces.set(surfaceId, []);
+            }
             this.surfaces.get(surfaceId).push(t);
         }
+
+        // Full source-element topology. The render mesh contains only the
+        // external shell, while mapper.input still contains every emitted face
+        // of each volume cell. Keeping raw point indices here lets Element mode
+        // highlight the complete original cell instead of one render triangle.
+        this.elementTriangles = this._buildSourceElementTriangles();
+
+        // Part selection uses only geometric boundary/feature edges. Coplanar
+        // mesh subdivisions are intentionally excluded.
+        this.partOutlinePositions = this._buildFeatureEdgePositions(surfaceFeatureAngle);
 
         // ---- node reverse lookup: nodeId -> one representative raw vertex ----
         this._nodeToRaw = new Map();
@@ -227,12 +236,20 @@ export class ActorTopology {
         return this._pointMap ? this._pointMap[rawVertexIndex] : rawVertexIndex;
     }
 
+    nodeOfWelded(weldedId) {
+        const raw = this.weldedToCorner.get(weldedId)?.[0];
+        return raw == null ? weldedId : this.nodeOf(raw);
+    }
+
     chainOf(edgeId) { return this.chains.get(edgeId) ?? null; }
 
     // ------------------------------------------------------ id -> triangles
 
     trianglesOfCell(cellId) { return this.cellTris.get(cellId) ?? []; }
+    rawTrianglesOfCell(cellId) { return this.elementTriangles.get(cellId) ?? null; }
     trianglesOfSurface(surfaceId) { return this.surfaces.get(surfaceId) ?? []; }
+
+    surfaceEntries() { return Array.from(this.surfaces.entries()); }
 
     // --------------------------------------------------------- id -> position
 
@@ -278,12 +295,198 @@ export class ActorTopology {
     queryVerts(point, radius) {
         const out = [];
         const r2 = radius * radius;
-        const pos = this.corners;
-        for (let i = 0; i < pos.count; i++) {
-            _va.fromBufferAttribute(pos, i);
-            if (_va.distanceToSquared(point) <= r2) out.push(i);
+        for (let w = 0; w < this.wcount; w++) {
+            this.weldedPosition(w, _va);
+            if (_va.distanceToSquared(point) <= r2) out.push(w);
         }
         return out;
+    }
+
+    _buildFeatureSurfaces(featureAngleDeg) {
+        const normals = new Array(this.triCount);
+        const edgeToTris = new Map();
+        const cosLimit = Math.cos(THREE.MathUtils.degToRad(featureAngleDeg));
+
+        for (let t = 0; t < this.triCount; t++) {
+            const o = t * 3;
+            const a = this.tri[o], b = this.tri[o + 1], c = this.tri[o + 2];
+
+            _va.set(this.wpos[a * 3], this.wpos[a * 3 + 1], this.wpos[a * 3 + 2]);
+            _vb.set(this.wpos[b * 3], this.wpos[b * 3 + 1], this.wpos[b * 3 + 2]);
+            _vc.set(this.wpos[c * 3], this.wpos[c * 3 + 1], this.wpos[c * 3 + 2]);
+            normals[t] = _vd.subVectors(_vb, _va).cross(_vc.sub(_va)).normalize().clone();
+
+            for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+                const k = edgeKey(u, v);
+                if (!edgeToTris.has(k)) edgeToTris.set(k, []);
+                edgeToTris.get(k).push(t);
+            }
+        }
+
+        const adjacency = Array.from({ length: this.triCount }, () => []);
+        for (const tris of edgeToTris.values()) {
+            if (tris.length < 2) continue;
+            // FEA surface meshes can be non-manifold after volume faces are
+            // triangulated or coincident vertices are welded. Connect every
+            // compatible pair around the edge instead of requiring exactly
+            // two incident triangles.
+            for (let i = 0; i < tris.length; i++) {
+                for (let j = i + 1; j < tris.length; j++) {
+                    const t0 = tris[i], t1 = tris[j];
+                    if (Math.abs(normals[t0].dot(normals[t1])) < cosLimit) continue;
+                    adjacency[t0].push(t1);
+                    adjacency[t1].push(t0);
+                }
+            }
+        }
+
+        const surfaceIds = new Array(this.triCount).fill(-1);
+        let nextSurfaceId = 0;
+        for (let seed = 0; seed < this.triCount; seed++) {
+            if (surfaceIds[seed] !== -1) continue;
+            const stack = [seed];
+            surfaceIds[seed] = nextSurfaceId;
+            while (stack.length) {
+                const t = stack.pop();
+                for (const n of adjacency[t]) {
+                    if (surfaceIds[n] !== -1) continue;
+                    surfaceIds[n] = nextSurfaceId;
+                    stack.push(n);
+                }
+            }
+            nextSurfaceId++;
+        }
+
+        return surfaceIds;
+    }
+
+    _buildSourceElementTriangles() {
+        const pd = this.actor?.mapper?.input;
+        const polys = pd?.polys;
+        if (!polys) return new Map();
+
+        const polySource = pd.userData?.polySourceCellMap ?? pd.userData?.surfaceCellMap ?? null;
+        const groups = new Map();
+        let faceId = 0;
+        for (const cell of polys) {
+            const cellId = polySource ? polySource[faceId] : faceId;
+            let raw = groups.get(cellId);
+            if (!raw) { raw = []; groups.set(cellId, raw); }
+            for (let i = 1; i + 1 < cell.length; i++) {
+                raw.push(cell[0], cell[i], cell[i + 1]);
+            }
+            faceId++;
+        }
+
+        const strips = pd.strips;
+        const stripSource = pd.userData?.stripSourceCellMap ?? null;
+        if (strips) {
+            let stripId = 0;
+            for (const strip of strips) {
+                const cellId = stripSource
+                    ? stripSource[stripId]
+                    : (pd.userData?.surfaceCellMap?.[faceId + stripId] ?? faceId + stripId);
+                let raw = groups.get(cellId);
+                if (!raw) { raw = []; groups.set(cellId, raw); }
+                for (let i = 0; i + 2 < strip.length; i++) {
+                    if ((i & 1) === 0) raw.push(strip[i], strip[i + 1], strip[i + 2]);
+                    else raw.push(strip[i + 1], strip[i], strip[i + 2]);
+                }
+                stripId++;
+            }
+        }
+        return groups;
+    }
+
+    _buildFeatureEdgePositions(featureAngleDeg) {
+        const cosLimit = Math.cos(THREE.MathUtils.degToRad(featureAngleDeg));
+        const edges = new Map();
+        const normals = new Array(this.triCount);
+
+        for (let t = 0; t < this.triCount; t++) {
+            const o = t * 3;
+            const a = this.tri[o], b = this.tri[o + 1], c = this.tri[o + 2];
+            _va.set(this.wpos[a * 3], this.wpos[a * 3 + 1], this.wpos[a * 3 + 2]);
+            _vb.set(this.wpos[b * 3], this.wpos[b * 3 + 1], this.wpos[b * 3 + 2]);
+            _vc.set(this.wpos[c * 3], this.wpos[c * 3 + 1], this.wpos[c * 3 + 2]);
+            normals[t] = _vd.subVectors(_vb, _va).cross(_vc.sub(_va)).normalize().clone();
+            for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+                const k = edgeKey(u, v);
+                if (!edges.has(k)) edges.set(k, { u, v, tris: [] });
+                edges.get(k).tris.push(t);
+            }
+        }
+
+        const selected = [];
+        for (const { u, v, tris } of edges.values()) {
+            let keep = tris.length === 1;
+            // For manifold and non-manifold edges alike, retain the edge only
+            // when at least one pair of incident faces forms a feature angle.
+            // Coplanar mesh subdivisions (even duplicated ones) are excluded.
+            for (let i = 0; !keep && i < tris.length; i++) {
+                for (let j = i + 1; j < tris.length; j++) {
+                    if (Math.abs(normals[tris[i]].dot(normals[tris[j]])) <= cosLimit) {
+                        keep = true;
+                        break;
+                    }
+                }
+            }
+            if (!keep) continue;
+            selected.push({ u, v });
+        }
+
+        // Merge collinear feature segments into their maximal geometric edge.
+        // A meshed cuboid then produces 12 boundary edges regardless of how
+        // many elements subdivide each edge.
+        const adjacency = new Map();
+        selected.forEach((e, i) => {
+            if (!adjacency.has(e.u)) adjacency.set(e.u, []);
+            if (!adjacency.has(e.v)) adjacency.set(e.v, []);
+            adjacency.get(e.u).push(i);
+            adjacency.get(e.v).push(i);
+        });
+        const other = (edgeId, vertex) => {
+            const e = selected[edgeId];
+            return e.u === vertex ? e.v : e.u;
+        };
+        const direction = (from, to, target) => target.set(
+            this.wpos[to * 3] - this.wpos[from * 3],
+            this.wpos[to * 3 + 1] - this.wpos[from * 3 + 1],
+            this.wpos[to * 3 + 2] - this.wpos[from * 3 + 2]
+        ).normalize();
+        const visited = new Uint8Array(selected.length);
+        const pts = [];
+        const d0 = new THREE.Vector3(), d1 = new THREE.Vector3();
+        for (let seed = 0; seed < selected.length; seed++) {
+            if (visited[seed]) continue;
+            const edge = selected[seed];
+            let start = adjacency.get(edge.u).length === 2 && adjacency.get(edge.v).length !== 2
+                ? edge.v : edge.u;
+            let previous = start;
+            let currentEdge = seed;
+            let current = other(currentEdge, start);
+            visited[currentEdge] = 1;
+
+            while (adjacency.get(current)?.length === 2) {
+                const pair = adjacency.get(current);
+                const nextEdge = pair[0] === currentEdge ? pair[1] : pair[0];
+                if (visited[nextEdge]) break;
+                const next = other(nextEdge, current);
+                direction(previous, current, d0);
+                direction(current, next, d1);
+                if (Math.abs(d0.dot(d1)) < 1 - 1e-6) break;
+                visited[nextEdge] = 1;
+                previous = current;
+                current = next;
+                currentEdge = nextEdge;
+            }
+
+            pts.push(
+                this.wpos[start * 3], this.wpos[start * 3 + 1], this.wpos[start * 3 + 2],
+                this.wpos[current * 3], this.wpos[current * 3 + 1], this.wpos[current * 3 + 2]
+            );
+        }
+        return Float32Array.from(pts);
     }
 
     // ------------------------------------------------------------- lifecycle
@@ -321,8 +524,8 @@ export class ActorTopology {
         return [
             "triRaw", "tri", "wpos", "triCount", "wcount", "bbox", "diag",
             "cellTris", "surfaces", "corners", "chains", "weldedToCorner",
-            "cellOf", "surfaceOf", "nodeOf", "chainOf",
-            "trianglesOfCell", "trianglesOfSurface",
+            "cellOf", "surfaceOf", "nodeOf", "nodeOfWelded", "chainOf",
+            "trianglesOfCell", "rawTrianglesOfCell", "trianglesOfSurface", "surfaceEntries",
             "cornerOf", "nodePosition", "weldedPosition", "triCentroid", "queryVerts",
         ];
     }

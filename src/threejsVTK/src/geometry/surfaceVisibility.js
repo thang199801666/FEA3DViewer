@@ -147,8 +147,15 @@ export function extractByVisibility(geometry, opts = {}) {
         newIndex[i * 3 + 2] = vertOf(t, 2);
     }
     out.setIndex(new THREE.BufferAttribute(newIndex, 1));
+    const sourceCellMap = geometry.userData?.cellMap ?? null;
+    const filteredCellMap = new Int32Array(kept.length);
+    for (let i = 0; i < kept.length; i++) {
+        filteredCellMap[i] = sourceCellMap ? sourceCellMap[kept[i]] : kept[i];
+    }
+    out.userData = { ...geometry.userData };
+    out.userData.cellMap = filteredCellMap;
     out.userData.keptTriangles = Uint32Array.from(kept);
-    out.userData.sourceCellMap = geometry.userData?.cellMap ?? null;
+    out.userData.sourceCellMap = sourceCellMap;
     
     if (recomputeNormals) out.computeVertexNormals();
     return out;
