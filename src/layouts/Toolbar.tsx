@@ -1,10 +1,23 @@
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from "react"; 
-import * as THREE from "three";
 import "./Toolbar.css"; 
 // Note: You might need to supply declaration definitions file (.d.ts) matching these relative paths requirements module context
-import { VTKLegacyReader, VTPReader, LookupTable, PolyDataMapper, Actor } from "../threejsVTK/src";
+import {
+    VTKLegacyReader,
+    VTPReader,
+    LookupTable,
+    PolyDataMapper,
+    Actor,
+    ClipClosedSurfaceFilter,
+    computeSceneBounds,
+    SectionPlaneHelperActor,
+} from "../threejsVTK/src";
 import SectionDialog from "./SectionDialog"; 
 import RibbonButton from "./RibbonButton";
+import {
+    executeToolbarCommand,
+    type ToolbarCommandId,
+    type ToolbarAction,
+} from "../controllers/commands/toolbarCommands";
 
 // Definition requirements targeting discrete clipping spatial mapping coordinates configuration axes 
 interface ClipAxisConfig {
@@ -47,7 +60,7 @@ interface BoxDimensions {
 
 // Custom interface schema representing dynamic configurations parameterizing structural scene controller pipeline instances
 interface SceneControllerInstance {
-    scene: THREE.Scene;
+    scene: any;
     renderWindow?: {
         renderer?: {
             localClippingEnabled: boolean;
@@ -123,44 +136,30 @@ export default function Toolbar({
     });
     const [clipBounds, setClipBounds] = useState<ClipBounds>({ min: [-1, -1, -1], max: [1, 1, 1] });
 
-    // Instantiated Three.js logical plane structural references
-    const clipPlanesRef = useRef<{ x: THREE.Plane; y: THREE.Plane; z: THREE.Plane }>({
-        x: new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
-        y: new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
-        z: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
-    });
-    
-    const clipHelpersRef = useRef<{ x: THREE.Group | null; y: THREE.Group | null; z: THREE.Group | null }>({ 
+    const clipHelpersRef = useRef<{ x: any | null; y: any | null; z: any | null }>({ 
         x: null, 
         y: null, 
         z: null 
     });
+    const clipOriginalDataRef = useRef<WeakMap<any, any>>(new WeakMap());
     const clipLastCountRef = useRef<number>(0);
     const applyClipRef = useRef<((state?: ClipState) => void) | null>(null);
 
     // Computes aggregate bounding constraints for active mesh instances across the spatial scene
-    const getModelBounds = useCallback((): THREE.Box3 => {
-        const box = new THREE.Box3();
+    const getModelBounds = useCallback(() => {
         const scene = sceneController?.scene;
-        if (!scene) return box;
-        scene.updateMatrixWorld(true);
-        scene.traverse((o: THREE.Object3D) => {
-            if ("isActor" in o && (o as any).isActor && o.name !== "system_grid") {
-                box.expandByObject(o);
-            }
-        });
-        return box;
+        return computeSceneBounds(scene, (o: any) => ("isActor" in o && o.isActor && o.name !== "system_grid"));
     }, [sceneController]);
 
     // Internal traversal mapping interface acting explicitly across valid finite element meshes
-    const forEachActorMaterial = useCallback((cb: (material: THREE.Material) => void): void => {
+    const forEachActorMaterial = useCallback((cb: (material: any) => void): void => {
         const scene = sceneController?.scene;
         if (!scene) return;
-        scene.traverse((o: THREE.Object3D) => {
+        scene.traverse((o: any) => {
             if (o.name === "clip_plane_helper" || o.name === "system_grid") return;
             if (!("material" in o) || !(o as any).material) return;
             
-            let p: THREE.Object3D | null = o;
+            let p: any | null = o;
             let isInActor = false;
             while (p) { 
                 if ("isActor" in p && (p as any).isActor) { 
@@ -172,7 +171,7 @@ export default function Toolbar({
             if (!isInActor) return;
             
             const targetMaterial = (o as any).material;
-            const mats: THREE.Material[] = Array.isArray(targetMaterial) ? targetMaterial : [targetMaterial];
+            const mats: any[] = Array.isArray(targetMaterial) ? targetMaterial : [targetMaterial];
             mats.forEach(cb);
         });
     }, [sceneController]);
@@ -180,34 +179,28 @@ export default function Toolbar({
     // Updates state matrix configurations, geometries, and visual representations for active section layers
     const applyClip = useCallback((state: ClipState = clip): void => {
         if (!sceneController?.scene) return;
-        const planes = clipPlanesRef.current;
         const helpers = clipHelpersRef.current;
         const scene = sceneController.scene;
 
         const box = getModelBounds();
         const isEmpty = box.isEmpty();
-        const sizeX = isEmpty ? 2 : (box.max.x - box.min.x) || 1;
-        const sizeY = isEmpty ? 2 : (box.max.y - box.min.y) || 1;
-        const sizeZ = isEmpty ? 2 : (box.max.z - box.min.z) || 1;
-        const center = isEmpty ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+        const sizeX = isEmpty ? 2 : (box.max[0] - box.min[0]) || 1;
+        const sizeY = isEmpty ? 2 : (box.max[1] - box.min[1]) || 1;
+        const sizeZ = isEmpty ? 2 : (box.max[2] - box.min[2]) || 1;
+        const center = isEmpty ? [0, 0, 0] : box.center;
 
-        const active: THREE.Plane[] = [];
+        const activeFilters: Array<{ normal: [number, number, number]; origin: [number, number, number] }> = [];
         for (const ax of CLIP_AXES) {
             const s = state[ax.key];
-            const plane = planes[ax.key];
-            
-            const n = new THREE.Vector3();
-            n.setComponent(ax.index, s.flip ? 1 : -1);
-            plane.normal.copy(n);
-            plane.constant = s.flip ? -s.pos : s.pos;
+            const normal: [number, number, number] = [0, 0, 0];
+            normal[ax.index] = s.flip ? 1 : -1;
 
             if (s.on) {
-                active.push(plane);
+                const origin: [number, number, number] = [center[0], center[1], center[2]];
+                origin[ax.index] = s.pos;
+                activeFilters.push({ normal, origin });
                 
                 if (!helpers[ax.key]) {
-                    const customHelper = new THREE.Group();
-                    customHelper.name = "clip_plane_helper";
-
                     let w = 1, h = 1;
                     if (ax.key === "x") { w = sizeZ; h = sizeY; }
                     if (ax.key === "y") { w = sizeX; h = sizeZ; }
@@ -216,69 +209,71 @@ export default function Toolbar({
                     w *= 1.1; 
                     h *= 1.1;
 
-                    const planeGeo = new THREE.PlaneGeometry(w, h);
-                    const planeMat = new THREE.MeshBasicMaterial({
+                    const customHelper = new SectionPlaneHelperActor({
+                        axis: ax.key,
+                        width: w,
+                        height: h,
                         color: ax.color,
-                        side: THREE.DoubleSide,
-                        transparent: true,
                         opacity: 0.12, 
-                        depthWrite: false
                     });
-                    const mesh = new THREE.Mesh(planeGeo, planeMat);
-                    customHelper.add(mesh);
-
-                    const edgesGeo = new THREE.BufferGeometry().setFromPoints([
-                        new THREE.Vector3(-w/2, -h/2, 0),
-                        new THREE.Vector3(w/2, -h/2, 0),
-                        new THREE.Vector3(w/2, h/2, 0),
-                        new THREE.Vector3(-w/2, h/2, 0),
-                    ]);
-                    const lineMat = new THREE.LineBasicMaterial({ 
-                        color: ax.color, 
-                        transparent: true,
-                        opacity: 0.6 
-                    });
-                    const boundsLine = new THREE.LineLoop(edgesGeo, lineMat);
-                    customHelper.add(boundsLine);
-
-                    if (ax.key === "x") customHelper.lookAt(new THREE.Vector3(1, 0, 0));
-                    if (ax.key === "y") customHelper.lookAt(new THREE.Vector3(0, 1, 0));
-                    if (ax.key === "z") customHelper.lookAt(new THREE.Vector3(0, 0, 1));
 
                     scene.add(customHelper);
                     helpers[ax.key] = customHelper;
                 }
 
                 if (helpers[ax.key]) {
-                    const posVec = center.clone();
-                    posVec.setComponent(ax.index, s.pos);
-                    helpers[ax.key]!.position.copy(posVec);
+                    const position: [number, number, number] = [center[0], center[1], center[2]];
+                    position[ax.index] = s.pos;
+                    helpers[ax.key]!.setPositionArray(position);
                     helpers[ax.key]!.visible = s.showPlane ?? true;
                 }
 
             } else if (helpers[ax.key]) {
                 scene.remove(helpers[ax.key]!);
-                helpers[ax.key]!.traverse((child: THREE.Object3D) => {
-                    if ("geometry" in child && (child as any).geometry) (child as any).geometry.dispose();
-                    if ("material" in child && (child as any).material) (child as any).material.dispose();
-                });
+                helpers[ax.key]!.dispose?.();
                 helpers[ax.key] = null;
             }
         }
 
-        const countChanged = active.length !== clipLastCountRef.current;
+        const countChanged = activeFilters.length !== clipLastCountRef.current;
         forEachActorMaterial((m: any) => {
-            m.clippingPlanes = active.length ? active : null;
+            // Section cut is now applied to actor PolyData, not only by shader planes.
+            // Keep material clipping disabled so cap surfaces remain visible.
+            m.clippingPlanes = null;
             m.clipIntersection = false;
             if (countChanged) m.needsUpdate = true;
         });
-        clipLastCountRef.current = active.length;
+        clipLastCountRef.current = activeFilters.length;
+
+        scene.traverse((obj: any) => {
+            if (!obj?.isActor || obj.name === "system_grid" || obj.name === "clip_plane_helper") return;
+            const mapper = obj.mapper;
+            if (!mapper?.input || typeof mapper.setInputData !== "function") return;
+
+            const originals = clipOriginalDataRef.current;
+            const originalInput = originals.get(obj) ?? mapper.input;
+            if (!originals.has(obj)) originals.set(obj, originalInput);
+
+            let output = originalInput;
+            for (const f of activeFilters) {
+                output = new ClipClosedSurfaceFilter()
+                    .setInputData(output)
+                    .setPlane(f.normal, f.origin)
+                    .setInsideOut(false)
+                    .setCapping(true)
+                    .getOutputData();
+            }
+
+            mapper.setInputData(output);
+            obj.setScalarVisibility?.(showContour);
+            obj.update?.();
+        });
 
         const rw = sceneController?.renderWindow;
         if (rw?.renderer) rw.renderer.localClippingEnabled = true;
 
         sceneController?.requestRender?.();
-    }, [sceneController, clip, getModelBounds, forEachActorMaterial]);
+    }, [sceneController, clip, getModelBounds, forEachActorMaterial, showContour]);
 
     applyClipRef.current = applyClip;
 
@@ -288,12 +283,12 @@ export default function Toolbar({
     const openClipDialog = (): void => {
         const box = getModelBounds();
         if (!box.isEmpty()) {
-            const min = box.min, max = box.max, c = box.getCenter(new THREE.Vector3());
-            setClipBounds({ min: [min.x, min.y, min.z], max: [max.x, max.y, max.z] });
+            const min = box.min, max = box.max, c = box.center;
+            setClipBounds({ min: [min[0], min[1], min[2]], max: [max[0], max[1], max[2]] });
             setClip((prev) => ({
-                x: { ...prev.x, pos: prev.x.on ? prev.x.pos : c.x },
-                y: { ...prev.y, pos: prev.y.on ? prev.y.pos : c.y },
-                z: { ...prev.z, pos: prev.z.on ? prev.z.pos : c.z },
+                x: { ...prev.x, pos: prev.x.on ? prev.x.pos : c[0] },
+                y: { ...prev.y, pos: prev.y.on ? prev.y.pos : c[1] },
+                z: { ...prev.z, pos: prev.z.on ? prev.z.pos : c[2] },
             }));
         }
         setIsClipOpen(true);
@@ -310,10 +305,7 @@ export default function Toolbar({
                 const k = key as "x" | "y" | "z";
                 if (helpers[k]) {
                     sceneController.scene.remove(helpers[k]!);
-                    helpers[k]!.traverse((child: THREE.Object3D) => {
-                        if ("geometry" in child && (child as any).geometry) (child as any).geometry.dispose();
-                        if ("material" in child && (child as any).material) (child as any).material.dispose();
-                    });
+                    helpers[k]!.dispose?.();
                     helpers[k] = null;
                 }
             }
@@ -331,8 +323,9 @@ export default function Toolbar({
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const isVTK = file.name.endsWith(".vtk");
-        const isVTP = file.name.endsWith(".vtp");
+        const lowerName = file.name.toLowerCase();
+        const isVTK = lowerName.endsWith(".vtk");
+        const isVTP = lowerName.endsWith(".vtp");
         if (!isVTK && !isVTP) { alert("Only supports .vtk or .vtp files"); return; }
 
         const reader = new FileReader();
@@ -341,7 +334,7 @@ export default function Toolbar({
                 if (!event.target?.result) return;
                 
                 const polyData = isVTK
-                    ? new VTKLegacyReader().parse(event.target.result as string)
+                    ? new VTKLegacyReader().parse(event.target.result as ArrayBuffer)
                     : new VTPReader().parse(event.target.result as ArrayBuffer);
 
                 const mapper = new PolyDataMapper().setInputData(polyData).setLookupTable(new LookupTable());
@@ -365,7 +358,7 @@ export default function Toolbar({
                 alert(`Cannot read file: ${err.message}`);
             }
         };
-        if (isVTK) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+        reader.readAsArrayBuffer(file);
         e.target.value = "";
     };
 
@@ -384,58 +377,58 @@ export default function Toolbar({
 
         // Extract the camera instance from the sceneController
         const cadCam = (sceneController as any).cadCamera;
-        if (!cadCam || !cadCam.three) return;
+        if (!cadCam?.getPosition || !cadCam?.setPosition) return;
 
-        const cam = cadCam.three;
-        const target = new THREE.Vector3(0, 0, 0);
-        const distance = cam.position.distanceTo(target) || 15;
+        const target = [0, 0, 0];
+        const pos = cadCam.getPosition([0, 0, 0]);
+        const distance = Math.hypot(pos[0] - target[0], pos[1] - target[1], pos[2] - target[2]) || 15;
 
-        let newPos = new THREE.Vector3();
-        let newUp = new THREE.Vector3(0, 1, 0); // Default Up along +Y
+        let newPos: [number, number, number] = [0, 0, distance];
+        let newUp: [number, number, number] = [0, 1, 0]; // Default Up along +Y
 
         // Normalize viewName strings to handle lowercase routing cleanly from the ribbon buttons
         const viewKey = viewName.toLowerCase();
 
         switch (viewKey) {
             case "front":
-                newPos.set(0, 0, distance);
-                newUp.set(0, 1, 0);
+                newPos = [0, 0, distance];
+                newUp = [0, 1, 0];
                 break;
             case "back":
-                newPos.set(0, 0, -distance);
-                newUp.set(0, 1, 0);
+                newPos = [0, 0, -distance];
+                newUp = [0, 1, 0];
                 break;
             case "top":
-                newPos.set(0, distance, 0);
-                newUp.set(0, 0, -1); // Looking down from +Y means -Z becomes viewport "Up"
+                newPos = [0, distance, 0];
+                newUp = [0, 0, -1]; // Looking down from +Y means -Z becomes viewport "Up"
                 break;
             case "bottom":
-                newPos.set(0, -distance, 0);
-                newUp.set(0, 0, 1);  // Looking up from -Y means +Z becomes viewport "Up"
+                newPos = [0, -distance, 0];
+                newUp = [0, 0, 1];  // Looking up from -Y means +Z becomes viewport "Up"
                 break;
             case "left":
-                newPos.set(-distance, 0, 0);
-                newUp.set(0, 1, 0);
+                newPos = [-distance, 0, 0];
+                newUp = [0, 1, 0];
                 break;
             case "right":
-                newPos.set(distance, 0, 0);
-                newUp.set(0, 1, 0);
+                newPos = [distance, 0, 0];
+                newUp = [0, 1, 0];
                 break;
             case "iso":
             case "isometric":
                 const iso = distance / Math.sqrt(3);
-                newPos.set(iso, iso, iso);
-                newUp.set(-1, 2, -1).normalize(); // Mathematically consistent for true FEA isometric projection
+                newPos = [iso, iso, iso];
+                newUp = [-1 / Math.sqrt(6), 2 / Math.sqrt(6), -1 / Math.sqrt(6)]; // Mathematically consistent for true FEA isometric projection
                 break;
             default:
                 return;
         }
 
-        // Apply spatial transformations safely matching Scene.jsx perfectly
-        cam.position.copy(newPos);
-        cam.up.copy(newUp);
-        cam.lookAt(target);
-        cam.updateMatrixWorld(true);
+        // Apply spatial transformations safely matching Scene.tsx perfectly
+        cadCam.setPosition(newPos[0], newPos[1], newPos[2]);
+        cadCam.setUp?.(newUp[0], newUp[1], newUp[2]);
+        cadCam.lookAt?.(target[0], target[1], target[2]);
+        cadCam.updateMatrixWorld?.(true);
 
         // Synchronize the threejsVTK Camera wrapper facade state core
         if (typeof cadCam.setFromThree === "function") {
@@ -509,6 +502,40 @@ export default function Toolbar({
         if (typeof sceneController.PlotContour === "function") sceneController.PlotContour(nextState);
         onSceneChanged?.();
     };
+
+    const handleToggleCameraNav = (): void => {
+        if (!sceneController || typeof sceneController.ToggleCameraNav !== "function") return;
+        sceneController.ToggleCameraNav();
+        onSceneChanged?.();
+    };
+
+    const commandActionsRef = useRef<Record<string, ToolbarAction | undefined>>({});
+    commandActionsRef.current = {
+        openFile: handleOpenClick,
+        resetView: handleResetView,
+        toggleContour: handleToggleContour,
+        openSettings: onOpenSettings,
+        clearScene: handleClearScene,
+        openClipDialog,
+        openBoxDialog: handleOpenBoxDialog,
+        setView: handleSetView,
+        fitView: handleFitView,
+        toggleSplit: onToggleSplit,
+        toggleViewLink: onToggleViewLink,
+        toggleGrid: onToggleGrid,
+        toggleAxes: onToggleAxes,
+        toggleCameraNav: handleToggleCameraNav,
+        toggleRuler: onToggleRuler,
+        toggleNotes: onToggleTextBlock,
+        showAbout: () => alert("FEA Viewer Version 1.0.0"),
+    };
+
+    const runCommand = useCallback((
+        commandId: ToolbarCommandId,
+        payload?: unknown
+    ): void => {
+        executeToolbarCommand(commandId, { actions: commandActionsRef.current }, payload);
+    }, []);
 
     // Theme Configuration Palette Settings
     let toolbarBg = "#f3f3f3";
@@ -595,7 +622,8 @@ export default function Toolbar({
                                     hotkey="Ctrl+O"
                                     instruction="Import structural datasets from standard legacy .vtk or .vtp file models into the render context."
                                     textColor={textColor}
-                                    onClick={handleOpenClick}
+                                    commandId="file.open"
+                                    onCommand={runCommand}
                                 />
                                 <RibbonButton 
                                     icon="fitcontent" 
@@ -603,7 +631,8 @@ export default function Toolbar({
                                     hotkey="Esc"
                                     instruction="Restore target view position vector alignments back to default coordinates state parameters."
                                     textColor={textColor}
-                                    onClick={handleResetView}
+                                    commandId="view.reset"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>File & Reset</div>
@@ -613,12 +642,13 @@ export default function Toolbar({
                         <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
                             <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
                                 <RibbonButton 
-                                    icon="L-contour-3d" 
+                                    icon="contour" 
                                     label="Contour" 
                                     textColor={textColor} 
                                     active={showContour} 
                                     activeBtnBg={activeBtnBg} 
-                                    onClick={handleToggleContour}
+                                    commandId="result.toggleContour"
+                                    onCommand={runCommand}
                                     instruction="Render post-processing continuous isoline color map gradients derived from calculated node arrays."
                                 />
                             </div>
@@ -632,7 +662,8 @@ export default function Toolbar({
                                     label="Settings" 
                                     instruction="Open systems parameters configurations window panel to adapt default renderer targets."
                                     textColor={textColor}
-                                    onClick={onOpenSettings}
+                                    commandId="app.openSettings"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Configuration</div>
@@ -650,7 +681,8 @@ export default function Toolbar({
                                     label="Clear All" 
                                     instruction="Flush all elements, actors, geometries, and reference datasets out of the pipeline canvas context."
                                     textColor={textColor}
-                                    onClick={handleClearScene}
+                                    commandId="scene.clear"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Scene Actions</div>
@@ -665,7 +697,8 @@ export default function Toolbar({
                                     textColor={textColor}
                                     active={(clip.x.on || clip.y.on || clip.z.on)}
                                     activeBtnBg={activeBtnBg}
-                                    onClick={openClipDialog}
+                                    commandId="clip.open"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Clipping</div>
@@ -682,7 +715,8 @@ export default function Toolbar({
                                 label="Box" 
                                 instruction="Generate a solid mesh configuration primitive entity bounding specified geometric scale constants."
                                 textColor={textColor}
-                                onClick={handleOpenBoxDialog}
+                                commandId="shape.addBox"
+                                onCommand={runCommand}
                             />
                         </div>
                         <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Primitives</div>
@@ -702,7 +736,9 @@ export default function Toolbar({
                                         label={view.charAt(0).toUpperCase() + view.slice(1)}
                                         instruction={`Align camera matrices transformation mapping vectors looking directly from the ${view} layout angle.`}
                                         textColor={textColor}
-                                        onClick={() => handleSetView(view)}
+                                        commandId="view.setOrientation"
+                                        commandPayload={view}
+                                        onCommand={runCommand}
                                     />
                                 ))}
 
@@ -713,7 +749,8 @@ export default function Toolbar({
                                     label="Fit" 
                                     instruction="Re-scale camera viewing frustum bounds parameters encapsulating every existing model geometry."
                                     textColor={textColor}
-                                    onClick={handleFitView}
+                                    commandId="view.fit"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Orientations & Camera</div>
@@ -723,13 +760,14 @@ export default function Toolbar({
                         <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
                             <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
                                 <RibbonButton 
-                                    icon="split" 
+                                    icon="split-view" 
                                     label="Split View" 
                                     instruction="Toggle multi-view viewport configuration layout dividing the central render node space horizontally."
                                     textColor={textColor}
                                     active={isSplit}
                                     activeBtnBg={activeBtnBg}
-                                    onClick={onToggleSplit}
+                                    commandId="layout.toggleSplit"
+                                    onCommand={runCommand}
                                 />
                                 <RibbonButton 
                                     icon="link" 
@@ -739,7 +777,8 @@ export default function Toolbar({
                                     active={(isViewLinked && isSplit)}
                                     activeBtnBg={activeBtnBg}
                                     disabled={!isSplit}
-                                    onClick={onToggleViewLink}
+                                    commandId="layout.toggleLink"
+                                    onCommand={runCommand}
                                 />
                             </div>
                             <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Layouts</div>
@@ -749,29 +788,25 @@ export default function Toolbar({
                         <div className="ribbon-group" style={{ borderRight: borderStyle, paddingRight: "8px" }}>
                             <div className="ribbon-group-content" style={{ display: "flex", gap: "6px" }}>
                                 <RibbonButton 
-                                    icon="grid" label="Grid" textColor={textColor} active={showGrid} activeBtnBg={activeBtnBg} onClick={onToggleGrid}
+                                    icon="grid" label="Grid" textColor={textColor} active={showGrid} activeBtnBg={activeBtnBg} commandId="display.toggleGrid" onCommand={runCommand}
                                     instruction="Toggle global reference coordinate workspace base ground grid visibility status."
                                 />
                                 <RibbonButton 
-                                    icon="axes" label="Axes" textColor={textColor} active={showAxes} activeBtnBg={activeBtnBg} onClick={onToggleAxes}
+                                    icon="axes" label="Axes" textColor={textColor} active={showAxes} activeBtnBg={activeBtnBg} commandId="display.toggleAxes" onCommand={runCommand}
                                     instruction="Toggle visible local origin coordinate tracking system directional vector arrow indicators."
                                 />
                                 <RibbonButton 
                                     icon="camera-orientation" label="Cam Nav" textColor={textColor} active={sceneController?.showCameraNav} activeBtnBg={activeBtnBg}
                                     instruction="Toggle navigation direction orientation interactive block cube inside active view views."
-                                    onClick={() => {
-                                        if (sceneController && typeof sceneController.ToggleCameraNav === "function") {
-                                            sceneController.ToggleCameraNav();
-                                            onSceneChanged?.(); 
-                                        }
-                                    }}
+                                    commandId="display.toggleCameraNav"
+                                    onCommand={runCommand}
                                 />
                                 <RibbonButton 
-                                    icon="ruler" label="Ruler" textColor={textColor} active={showRuler} activeBtnBg={activeBtnBg} onClick={onToggleRuler}
+                                    icon="ruler" label="Ruler" textColor={textColor} active={showRuler} activeBtnBg={activeBtnBg} commandId="display.toggleRuler" onCommand={runCommand}
                                     instruction="Toggle mouse pointer metrics measuring tool to determine distance between surface coordinates nodes."
                                 />
                                 <RibbonButton 
-                                    icon="notes" label="Notes" textColor={textColor} active={showTextBlock} activeBtnBg={activeBtnBg} onClick={onToggleTextBlock}
+                                    icon="notes" label="Notes" textColor={textColor} active={showTextBlock} activeBtnBg={activeBtnBg} commandId="display.toggleNotes" onCommand={runCommand}
                                     instruction="Display on-screen presentation text fields editor block for context tracking documentation."
                                 />
                             </div>
@@ -796,7 +831,8 @@ export default function Toolbar({
                                 label="About" 
                                 instruction="Display core build information metadata configurations for this active FEA execution software platform."
                                 textColor={textColor}
-                                onClick={() => alert("FEA Viewer Version 1.0.0")}
+                                commandId="help.about"
+                                onCommand={runCommand}
                             />
                         </div>
                         <div className="ribbon-group-title" style={{ backgroundColor: groupTitleBg, color: groupTitleColor }}>Support</div>

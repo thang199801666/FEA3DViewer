@@ -42,7 +42,7 @@ t("compressed nhưng thiếu pako -> lỗi hướng dẫn được", () => {
 });
 
 t("kiểu lạ -> lỗi rõ ràng", () => {
-  assert.throws(() => bytesToTyped(new Uint8Array(4), "Float128"), /chưa hỗ trợ/);
+  assert.throws(() => bytesToTyped(new Uint8Array(4), "Float128"), /is not supported/);
 });
 
 t("base64ToBytes chạy trên Node (không có atob global)", () => {

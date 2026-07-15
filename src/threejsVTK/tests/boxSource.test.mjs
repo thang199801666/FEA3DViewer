@@ -78,7 +78,7 @@ t("fn nhận toạ độ TƯƠNG ĐỐI với center, không phải toạ độ 
 });
 
 t("fn không phải hàm -> lỗi rõ ràng", () => {
-  assert.throws(() => new BoxSource().getOutputDataWithScalars("v", null), /cần một hàm/);
+  assert.throws(() => new BoxSource().getOutputDataWithScalars("v", null), /expected a function/);
 });
 
 t("winding CCW nhìn từ ngoài: pháp tuyến tam giác hướng RA NGOÀI", () => {

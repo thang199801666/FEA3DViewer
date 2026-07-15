@@ -5,25 +5,23 @@ export const DEFAULT_HIGHLIGHT_STYLE = {
     surfaceColor: 0xffb366,
     edgeColor: 0xe65c00,
     edgeThicknessFactor: 2.0,
+    edgeOpacity: 0.6,
   },
   select: {
     surfaceColor: 0xff9999,
     edgeColor: 0xb30000,
     edgeThicknessFactor: 1.5,
+    edgeOpacity: 0.7,
   },
   default: {
     surfaceColor: null,
-    edgeColor: 0x111111,
+    edgeColor: 0x000000, 
     edgeThicknessFactor: 1.0,
+    edgeOpacity: 1.0,
   },
 };
 
 export class ActorHighlighter {
-  /**
-   * @param {Object} [options]
-   * @param {Object} [options.style]           Overrides fields in DEFAULT_HIGHLIGHT_STYLE
-   * @param {Function} [options.onNeedsRender] Callback to request a scene re-render
-   */
   constructor({ style = {}, onNeedsRender = null } = {}) {
     this.style = this._mergeStyle(DEFAULT_HIGHLIGHT_STYLE, style);
     this.onNeedsRender = onNeedsRender;
@@ -37,8 +35,22 @@ export class ActorHighlighter {
     if (!s) throw new Error(`ActorHighlighter: unknown state "${state}"`);
 
     if (!skipSurface) this._applySurfaceColor(actor, s.surfaceColor);
-    this._applyEdgeColor(actor, s.edgeColor);
+    this._applyEdgeColor(actor, s.edgeColor, s.edgeOpacity); // Pass opacity here
     this._applyEdgeThickness(actor, s.edgeThicknessFactor);
+
+    // Handle boundary edge visibility natively inside apply() for all states
+    if (actor.boundaryEdge) {
+      if (state === 'hover' || state === 'select') {
+        actor.boundaryEdge.visible = true;
+      } else if (state === 'default') {
+        if (typeof actor.getDisplayMode === 'function' && actor.getDisplayMode() === "modelWithoutEdges") {
+          actor.boundaryEdge.visible = false;
+        } else {
+          actor.boundaryEdge.visible = true;
+        }
+      }
+    }
+
     this._requestRender();
   }
 
@@ -53,7 +65,6 @@ export class ActorHighlighter {
 
   // ---------------------------------------------------------------- Private
 
-  /** Checks if the actor has active contour scalar coloring. */
   _isScalarColored(actor) {
     return typeof actor.hasActiveScalarColoring === 'function'
       ? actor.hasActiveScalarColoring()
@@ -82,9 +93,15 @@ export class ActorHighlighter {
     }
   }
 
-  _applyEdgeColor(actor, color) {
+  _applyEdgeColor(actor, color, state) {
     if (color == null) return;
-    const c = color instanceof THREE.Color ? color : new THREE.Color(color);
+    let c = color instanceof THREE.Color ? color.clone() : new THREE.Color(color);
+
+    if (state === 'hover' || state === 'select') {
+      const ambientLightFactor = 0.3;
+      c.addScalar(ambientLightFactor); 
+    }
+
     if (typeof actor.setEdgeColor === 'function') {
       actor.setEdgeColor(c);
     } else if (typeof actor.setFeatureEdgeColor === 'function') {

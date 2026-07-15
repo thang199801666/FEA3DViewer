@@ -5,7 +5,7 @@ import { BoxSource, LookupTable, PolyDataMapper, Actor } from "../threejsVTK";
  * SceneController - Manages the Scene, Actors, and coordinates camera operations 
  * via vtkCamera (Rendering/Camera from threejsVTK) replacing the legacy CameraController.
  *
- * Scene.jsx will call attachRendering({...}) once the RenderWindow/Renderer/Camera infrastructure is ready.
+ * Scene.tsx calls attachRendering({...}) once the RenderWindow/Renderer/Camera infrastructure is ready.
  */
 export default class SceneController {
   constructor(camera, _legacyCameraController = null, externalScene = null) {

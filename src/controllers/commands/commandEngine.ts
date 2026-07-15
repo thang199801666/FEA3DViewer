@@ -1,7 +1,9 @@
+import type { Dispatch, SetStateAction } from "react";
+
 export interface CommandContext {
     sceneController: any;
     settings: any;
-    setSettings: React.Dispatch<React.SetStateAction<any>>;
+    setSettings: Dispatch<SetStateAction<any>>;
     triggerSceneUpdate: () => void;
 }
 

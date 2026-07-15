@@ -35,7 +35,6 @@ export class LineActor extends THREE.LineSegments {
         const useColors = !!(lut && scalars);
 
         if (useColors) {
-            const [mn, mx] = scalarRange || scalars.getRange(component);
             const tmp = [];
             const pushPoint = (i) => {
                 const points = pd.points;

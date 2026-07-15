@@ -16,12 +16,13 @@ const domElement = {
   getBoundingClientRect: () => ({ left: 0, top: 0, width: W, height: H }),
 };
 const mk = (opts = {}) => {
-  const three = new THREE.OrthographicCamera(-5*(W/H), 5*(W/H), 5, -5, 0.01, 10000);
-  three.position.set(10, 10, 10);
-  three.up.set(0, 1, 0);
-  three.lookAt(0, 0, 0);
-  three.updateMatrixWorld(true);
-  return new Camera(three, domElement, { animationDuration: 0, ...opts });
+  const c = new Camera(domElement, {
+    animationDuration: 0,
+    cameraArgs: { left: -5 * (W / H), right: 5 * (W / H), top: 5, bottom: -5, near: 0.01, far: 10000 },
+    ...opts,
+  });
+  c.setPosition(10, 10, 10).setUp(0, 1, 0).lookAt(0, 0, 0);
+  return c;
 };
 
 console.log("\nCamera facade (dựng lại)");
@@ -173,7 +174,7 @@ t("autoClipping=true -> near/far cập nhật theo bounding sphere", () => {
   assert.ok(n < f && Number.isFinite(n) && Number.isFinite(f));
 });
 
-t("setClippingRange chấp nhận near ÂM (mặt cắt CAD)", () => {
+t("setClippingRange chấp nhận negative near (mặt cắt CAD)", () => {
   const c = mk();
   c.setClippingRange(-50, 100);
   assert.deepEqual(c.getClippingRange(), [-50, 100]);
@@ -220,9 +221,6 @@ t("dispose dừng animation và gỡ listener", () => {
   assert.equal(c.animation.isAnimating, false);
 });
 
-t("ném lỗi rõ ràng nếu không truyền THREE.Camera", () => {
-  assert.throws(() => new Camera({}, domElement), /THREE.Camera/);
-});
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail?1:0);

@@ -1,24 +1,24 @@
 // sources/BoxSource.js
 //
-// ⚠ FILE NÀY ĐƯỢC DỰNG LẠI TỪ CHỖ GỌI, không phải bản gốc của bạn.
-//   Bản gốc (`BoxSource`) không có trong source được cung cấp. Hợp đồng dưới đây
-//   trích nguyên từ SceneController.addBoxActor():
+// This file was reconstructed from its call sites because the original
+// BoxSource implementation was not included in the provided source.
+// The contract below comes from SceneController.addBoxActor():
 //
 //     new BoxSource({ xLength, yLength, zLength, segments: 20 })
 //     source.getOutputDataWithScalars("stress", (x, y, z) => 1 - Math.hypot(x,y,z) / maxD)
-//     // maxD = nửa đường chéo  =>  giá trị 1 ở TÂM, 0 ở GÓC
-//     //                        =>  điểm phải centered quanh gốc toạ độ
+//     // maxD = half diagonal, so the scalar is 1 at the center and 0 at corners.
+//     // Points are centered around the source origin.
 //
-//   Nếu bạn tìm lại được bản gốc, dùng bản đó. So sánh trước khi thay:
+// If the original implementation is recovered, compare it before replacing:
 //     git log --all --diff-filter=D -- '**/BoxSource.js'
 //
-// Tương đương vtkCubeSource: sinh mặt ngoài của một hộp chữ nhật, mỗi mặt chia
-// thành segments × segments ô vuông (2 tam giác/ô).
+// vtkCubeSource equivalent: generates the outer surface of a rectangular box.
+// Each face is split into segments x segments quads, two triangles per quad.
 
 import { PolyData } from "../core/PolyData.js";
 
-// 6 mặt: [pháp tuyến, trục u, trục v] trong hệ toạ độ hộp.
-// Thứ tự u × v = pháp tuyến ngoài  =>  winding CCW nhìn từ ngoài.
+// Six faces: [normal, u axis, v axis] in box coordinates.
+// u x v follows the outward normal, so winding is CCW from outside.
 const FACES = [
     { n: [ 1, 0, 0], u: [0, 0, -1], v: [0, 1, 0] },   // +X
     { n: [-1, 0, 0], u: [0, 0,  1], v: [0, 1, 0] },   // -X
@@ -34,7 +34,7 @@ export class BoxSource {
      * @param {number} [opts.xLength=1]
      * @param {number} [opts.yLength=1]
      * @param {number} [opts.zLength=1]
-     * @param {number} [opts.segments=1]  số ô mỗi cạnh của MỘT mặt
+     * @param {number} [opts.segments=1]  Number of cells along each side of one face.
      * @param {number[]} [opts.center=[0,0,0]]
      */
     constructor({ xLength = 1, yLength = 1, zLength = 1, segments = 1, center = [0, 0, 0] } = {}) {
@@ -48,7 +48,7 @@ export class BoxSource {
     setSegments(n) { this.segments = Math.max(1, n | 0); return this; }
     setCenter(x, y, z) { this.center = [x, y, z]; return this; }
 
-    /** @returns {PolyData} mặt ngoài hộp, điểm centered quanh `center`. */
+    /** @returns {PolyData} Outer box surface with points centered around `center`. */
     getOutputData() {
         const n = this.segments;
         const half = [this.xLength / 2, this.yLength / 2, this.zLength / 2];
@@ -60,8 +60,8 @@ export class BoxSource {
         for (const face of FACES) {
             const base = points.length / 3;
 
-            // Lưới (n+1) × (n+1) đỉnh trên mặt này.
-            // p = n*half + (s*u + t*v) * half, với s,t ∈ [-1, 1]
+            // (n + 1) x (n + 1) vertex grid on this face.
+            // p = normal * half + (s * u + t * v) * half, with s,t in [-1, 1].
             for (let j = 0; j <= n; j++) {
                 const t = (j / n) * 2 - 1;
                 for (let i = 0; i <= n; i++) {
@@ -93,15 +93,16 @@ export class BoxSource {
     }
 
     /**
-     * Sinh hộp kèm một point-scalar tính từ TOẠ ĐỘ TƯƠNG ĐỐI SO VỚI TÂM hộp.
+     * Generates the box and attaches a point-scalar evaluated from coordinates
+     * relative to the box center.
      *
-     * @param {string} name         tên array (vd "stress")
-     * @param {(x:number,y:number,z:number)=>number} fn  nhận toạ độ ĐÃ TRỪ center
-     * @returns {PolyData} scalars được đặt làm active scalars
+     * @param {string} name Array name, for example "stress".
+     * @param {(x:number,y:number,z:number)=>number} fn Receives center-relative coordinates.
+     * @returns {PolyData} PolyData with the generated scalars set as active scalars.
      */
     getOutputDataWithScalars(name, fn) {
         if (typeof fn !== "function") {
-            throw new TypeError("BoxSource.getOutputDataWithScalars: cần một hàm (x,y,z) => number");
+            throw new TypeError("BoxSource.getOutputDataWithScalars: expected a function (x, y, z) => number");
         }
         const pd = this.getOutputData();
         const [cx, cy, cz] = this.center;

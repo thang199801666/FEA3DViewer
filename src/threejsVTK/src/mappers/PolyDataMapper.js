@@ -96,10 +96,34 @@ export class PolyDataMapper {
         const pd = this.input;
 
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.BufferAttribute(pd.points, 3));
+        const hasSurface = pd.hasSurface();
+        const hasLines = !hasSurface && pd.lines && pd.lines.length > 0;
+        const hasVerts = !hasSurface && !hasLines && pd.verts && pd.verts.length > 0;
+        let pointIds = null;
+        let tris = [];
 
-        const tris = pd.getTriangles();
-        if (tris.length > 0) geometry.setIndex(tris);
+        if (hasSurface) {
+            geometry.setAttribute("position", new THREE.BufferAttribute(pd.points, 3));
+            tris = pd.getTriangles();
+            if (tris.length > 0) geometry.setIndex(tris);
+            geometry.userData.primitiveType = "surface";
+        } else if (hasLines) {
+            const built = this._buildLinePositions(pd);
+            geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
+            pointIds = built.pointIds;
+            geometry.userData.primitiveType = "line";
+            geometry.userData.isLine = true;
+        } else if (hasVerts) {
+            const built = this._buildPointPositions(pd);
+            geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
+            pointIds = built.pointIds;
+            geometry.userData.primitiveType = "point";
+            geometry.userData.isPoint = true;
+        } else {
+            geometry.setAttribute("position", new THREE.BufferAttribute(pd.points, 3));
+            geometry.userData.primitiveType = "point";
+            geometry.userData.isPoint = true;
+        }
 
         const scalars = this.scalarVisibility ? this._resolveScalars() : null;
         if (scalars && scalars.getNumberOfTuples() === pd.getNumberOfPoints()) {
@@ -107,15 +131,17 @@ export class PolyDataMapper {
             const [mn, mx] = this.getEffectiveScalarRange();
             lut.setRange(mn, mx);
 
-            if (this.interpolateScalarsBeforeMapping) {
+            if (this.interpolateScalarsBeforeMapping && hasSurface) {
                 // Per-vertex texture coordinates mapping: u = normalized scalar [0..1]
                 // The GPU interpolates 'u' across the fragment, creating sharp color bands.
-                const uv = this._buildTexCoords(scalars, mn, mx);
+                const uv = this._buildTexCoords(scalars, mn, mx, pointIds);
                 geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
                 this._buildColorTexture(lut);
             } else {
                 // Standard behavior: colors map at the vertex level, GPU performs linear RGB blending.
-                const colors = lut.mapScalars(scalars, this.colorComponent);
+                const colors = pointIds
+                    ? this._mapDuplicatedScalars(lut, scalars, pointIds)
+                    : lut.mapScalars(scalars, this.colorComponent);
                 geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
             }
         }
@@ -126,15 +152,81 @@ export class PolyDataMapper {
         return geometry;
     }
 
-    _buildTexCoords(scalars, mn, mx) {
-        const n = scalars.getNumberOfTuples();
+    _buildLinePositions(pd) {
+        let segments = 0;
+        for (const line of pd.lines) segments += Math.max(0, line.length - 1);
+
+        const positions = new Float32Array(segments * 2 * 3);
+        const pointIds = new Int32Array(segments * 2);
+        let pw = 0, iw = 0;
+        const pts = pd.points;
+
+        for (const line of pd.lines) {
+            for (let i = 0; i + 1 < line.length; i++) {
+                const a = line[i], b = line[i + 1];
+                pointIds[iw++] = a;
+                pointIds[iw++] = b;
+                positions[pw++] = pts[a * 3];
+                positions[pw++] = pts[a * 3 + 1];
+                positions[pw++] = pts[a * 3 + 2];
+                positions[pw++] = pts[b * 3];
+                positions[pw++] = pts[b * 3 + 1];
+                positions[pw++] = pts[b * 3 + 2];
+            }
+        }
+
+        return { positions, pointIds };
+    }
+
+    _buildPointPositions(pd) {
+        let n = 0;
+        for (const vert of pd.verts) n += vert.length;
+
+        const positions = new Float32Array(n * 3);
+        const pointIds = new Int32Array(n);
+        let pw = 0, iw = 0;
+        const pts = pd.points;
+
+        for (const vert of pd.verts) {
+            for (let i = 0; i < vert.length; i++) {
+                const id = vert[i];
+                pointIds[iw++] = id;
+                positions[pw++] = pts[id * 3];
+                positions[pw++] = pts[id * 3 + 1];
+                positions[pw++] = pts[id * 3 + 2];
+            }
+        }
+
+        return { positions, pointIds };
+    }
+
+    _mapDuplicatedScalars(lut, scalars, pointIds) {
+        const colors = new Float32Array(pointIds.length * 3);
+        const tmp = [0, 0, 0];
+        let w = 0;
+        for (let i = 0; i < pointIds.length; i++) {
+            const id = pointIds[i];
+            const v = this.colorComponent === -1
+                ? scalars.getMagnitude(id)
+                : scalars.getComponent(id, this.colorComponent);
+            lut.getColor(v, tmp);
+            colors[w++] = tmp[0];
+            colors[w++] = tmp[1];
+            colors[w++] = tmp[2];
+        }
+        return colors;
+    }
+
+    _buildTexCoords(scalars, mn, mx, pointIds = null) {
+        const n = pointIds ? pointIds.length : scalars.getNumberOfTuples();
         const uv = new Float32Array(n * 2);
         const span = mx - mn;
         
         for (let i = 0; i < n; i++) {
+            const id = pointIds ? pointIds[i] : i;
             const v = this.colorComponent === -1
-                ? scalars.getMagnitude(i)
-                : scalars.getComponent(i, this.colorComponent);
+                ? scalars.getMagnitude(id)
+                : scalars.getComponent(id, this.colorComponent);
                 
             let t = span === 0 ? 0.5 : (v - mn) / span;
             if (Number.isNaN(t)) t = 0;

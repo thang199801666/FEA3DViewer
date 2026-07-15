@@ -65,7 +65,7 @@ t("input.modified() làm mất hiệu lực cache", () => {
 });
 
 t("strategy không hợp lệ -> ném lỗi rõ ràng", () => {
-  assert.throws(() => new SurfaceFilter().setStrategy("bogus"), /không hợp lệ/);
+  assert.throws(() => new SurfaceFilter().setStrategy("bogus"), /Invalid strategy/);
 });
 
 t("visibility: chạy được, loại vách trong", () => {

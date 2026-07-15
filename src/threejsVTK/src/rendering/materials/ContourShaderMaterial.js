@@ -1,13 +1,13 @@
 // Rendering/ContourShaderMaterial.js
-// Dựng THREE.ShaderMaterial banding contour hiệu năng cao từ ContourVertex/Fragment.glsl.
-// Ưu điểm so với vertex-color: đổi số band / range / isolines KHÔNG cần build lại geometry
-// (chỉ update uniform) => tương tác realtime với lưới lớn.
+// Builds a high-performance banded contour THREE.ShaderMaterial.
+// Compared with vertex colors, changing bands, range, or isolines updates uniforms
+// without rebuilding geometry, which keeps large meshes interactive.
 //
 //   const { material, attachScalar } = makeContourMaterial(lookupTable, { numBands: 12 });
-//   attachScalar(geometry, dataArray, [min,max]);   // gắn attribute aScalar
+//   attachScalar(geometry, dataArray, [min,max]);   // attach aScalar attribute
 //   const mesh = new THREE.Mesh(geometry, material);
 //
-// GLSL được nhúng inline để không phụ thuộc loader .glsl (bundler nào cũng chạy).
+// GLSL is embedded inline so no bundler-specific .glsl loader is required.
 
 import * as THREE from "three";
 
@@ -42,7 +42,7 @@ void main() {
     gl_FragColor = vec4(col, 1.0);
 }`;
 
-/** Dựng DataTexture 1D từ LookupTable/ColorTransferFunction. */
+/** Builds a 1D DataTexture from a LookupTable or ColorTransferFunction. */
 function lutToTexture(lut) {
     const data = lut.getUint8Table();
     const n = lut.numberOfColors;
@@ -78,7 +78,7 @@ export function makeContourMaterial(lookupTable, options = {}) {
         },
     });
 
-    // Gắn scalar (thô) vào geometry dưới dạng attribute aScalar.
+    // Attach raw scalars to geometry as the aScalar attribute.
     function attachScalar(geometry, dataArray, r = range, component = 0) {
         const n = dataArray.getNumberOfTuples();
         const arr = new Float32Array(n);
@@ -91,7 +91,7 @@ export function makeContourMaterial(lookupTable, options = {}) {
         if (!geometry.getAttribute("normal")) geometry.computeVertexNormals();
     }
 
-    // Cập nhật realtime — chỉ đổi uniform, cực nhanh.
+    // Realtime update path: only uniforms change.
     function setNumBands(n) { material.uniforms.uNumBands.value = n; }
     function setRange(min, max) { material.uniforms.uMin.value = min; material.uniforms.uMax.value = max; }
     function setIsolines(on) { material.uniforms.uShowIsolines.value = on ? 1 : 0; }

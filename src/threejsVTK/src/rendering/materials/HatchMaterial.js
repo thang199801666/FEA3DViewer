@@ -1,6 +1,6 @@
 // Rendering/HatchMaterial.js
-// Vật liệu KẺ GẠCH (hatch) cho mặt cắt kiểu bản vẽ kỹ thuật: nền đặc + các đường
-// chéo cách đều (theo không gian màn hình nên khoảng cách gạch ổn định khi zoom).
+// Hatch material for drafting-style section cuts: solid fill plus evenly spaced
+// diagonal lines in screen space so hatch spacing stays stable while zooming.
 //
 //   const mat = makeHatchMaterial({ angle: 45, spacing: 8, lineColor: 0x222222, fillColor: 0xcfd8dc });
 
@@ -19,7 +19,7 @@ uniform vec3  uFillColor, uLineColor, uLightDir;
 uniform float uSpacing, uAngle, uLineWidth, uAmbient, uOpacity;
 varying vec3 vNormal;
 void main() {
-    // Toạ độ dọc theo phương vuông góc với đường gạch, tính bằng pixel màn hình.
+    // Coordinate along the hatch-line normal, measured in screen pixels.
     float c = cos(uAngle), s = sin(uAngle);
     float coord = gl_FragCoord.x * c + gl_FragCoord.y * s;
     float f = mod(coord, uSpacing);

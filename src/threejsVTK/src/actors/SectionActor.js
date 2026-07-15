@@ -44,8 +44,9 @@ export class SectionActor extends THREE.Group {
             const arrName = this.options.scalarName;
             const scalars = arrName ? pd.pointData.getArray(arrName) : pd.pointData.getScalars();
             if (scalars) {
-                const sArr = Array.isArray(scalars.array) ? scalars.array : Array.from(scalars.array);
-                geo.setAttribute("scalar", new THREE.BufferAttribute(Float32Array.from(sArr), 1));
+                const raw = scalars.values ?? scalars.array ?? [];
+                const sArr = ArrayBuffer.isView(raw) ? raw : Array.from(raw);
+                geo.setAttribute("aScalar", new THREE.BufferAttribute(Float32Array.from(sArr), 1));
             }
         }
         geo.computeVertexNormals();
@@ -61,13 +62,18 @@ export class SectionActor extends THREE.Group {
 
         let material;
         if (mode === "contour" && this.options.lookupTable) {
-            const scalars = this._capData.pointData?.getScalars();
+            const scalars = this.options.scalarName
+                ? this._capData.pointData?.getArray(this.options.scalarName)
+                : this._capData.pointData?.getScalars();
             const range = this.options.range ?? (scalars ? scalars.getRange() : [0, 1]);
-            material = makeContourMaterial({
+            const contour = makeContourMaterial(this.options.lookupTable, {
                 lookupTable: this.options.lookupTable,
                 range: range,
                 numBands: this.options.numBands,
+                showIsolines: this.options.isolines,
             });
+            if (scalars) contour.attachScalar(this._geo, scalars, range);
+            material = contour.material;
             if (this.options.isolines) {
                 this._addIsolines(range);
             }

@@ -23,9 +23,12 @@ const domElement = {
   style: {},
 };
 const mk = () => {
-  const three = new THREE.OrthographicCamera(-6.67, 6.67, 5, -5, 0.01, 10000);
-  three.position.set(10,10,10); three.up.set(0,1,0); three.lookAt(0,0,0); three.updateMatrixWorld(true);
-  const cam = new Camera(three, domElement, { animationDuration: 0 });
+  const cam = new Camera(domElement, {
+    animationDuration: 0,
+    cameraArgs: { left: -6.67, right: 6.67, top: 5, bottom: -5, near: 0.01, far: 10000 },
+  });
+  cam.setPosition(10, 10, 10).setUp(0, 1, 0).lookAt(0, 0, 0);
+  const three = cam.three;
   const style = new InteractorStyleOrbit(cam, { enableDamping:false, enableZoomWindow:true });
   style.setInteractor?.({ render(){}, state:{} });
   return { cam, style, three };

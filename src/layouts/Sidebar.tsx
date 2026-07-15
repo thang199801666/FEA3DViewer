@@ -4,7 +4,7 @@ import PropertyPanel from "./PropertyPanel";
 import "./Sidebar.css"; 
 
 export default function Sidebar({ sceneController, sceneVersion, theme }) {
-    // Tăng chiều cao mặc định ban đầu của Model Tree lên (ví dụ: 480px) để giảm chiều cao Property Panel xuống
+    // Increase the initial model tree height to leave less room for the property panel.
     const [treeHeight, setTreeHeight] = useState(480); 
     const [isResizing, setIsResizing] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
@@ -16,10 +16,10 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
         const doResize = (e) => {
             if (!containerRef.current) return;
             const containerRect = containerRef.current.getBoundingClientRect();
-            // Tính toán chiều cao mới dựa trên vị trí chuột đối với container
+            // Compute the new height from the mouse position inside the container.
             const newHeight = e.clientY - containerRect.top;
 
-            // Giới hạn vùng kéo: Giữ khoảng trống tối thiểu cho cả Tree và Property Panel
+            // Clamp the drag range so both the tree and property panel keep usable space.
             if (newHeight > 150 && newHeight < containerRect.height - 100) {
                 setTreeHeight(newHeight);
             }
@@ -48,12 +48,12 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
                 userSelect: isResizing ? "none" : "auto"
             }}
         >
-            {/* Vùng Model Tree (Sử dụng chiều cao động từ state) */}
+            {/* Model tree area using state-driven height */}
             <div style={{ height: `${treeHeight}px`, overflowY: "auto", flexShrink: 0 }}>
                 <ModelTree sceneController={sceneController} sceneVersion={sceneVersion} theme={theme} />
             </div>
             
-            {/* --- SPLITTER DỌC GIỮA MODEL TREE VÀ PROPERTY PANEL --- */}
+            {/* Vertical splitter between the model tree and property panel */}
             <div 
                 onMouseDown={() => setIsResizing(true)}
                 onMouseEnter={() => setIsHovered(true)}
@@ -70,14 +70,14 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
                     flexShrink: 0
                 }}
             >
-                {/* Đường line mảnh phân cách */}
+                {/* Thin separator line */}
                 <div style={{
                     width: "100%",
                     height: "1px",
                     backgroundColor: isResizing || isHovered ? "#2196F3" : (isDark ? "#2d2d2d" : "#ccc")
                 }} />
 
-                {/* Dấu hiệu nhận biết kéo thả (Gân sọc 2 dòng mảnh) */}
+                {/* Drag handle indicator */}
                 <div style={{
                     position: "absolute",
                     width: "18px",
@@ -93,7 +93,7 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
                 </div>
             </div>
 
-            {/* Tiêu đề Property Panel */}
+            {/* Property panel title */}
             <div style={{ 
                 padding: "6px 15px 4px 15px",
                 fontSize: "11px", 
@@ -106,7 +106,7 @@ export default function Sidebar({ sceneController, sceneVersion, theme }) {
                 PROPERTIES
             </div>
 
-            {/* Vùng Property Panel (Tự động chiếm trọn phần diện tích còn lại ở bên dưới) */}
+            {/* Property panel area fills the remaining lower space */}
             <div style={{ flex: 1, overflowY: "auto", backgroundColor: isDark ? "#151515" : "#eaeaea" }}>
                 <PropertyPanel theme={theme} />
             </div>

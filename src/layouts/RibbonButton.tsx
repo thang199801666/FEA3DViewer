@@ -1,13 +1,20 @@
 import React, { useState, useRef, useEffect, ReactNode, ComponentPropsWithoutRef } from "react";
 import Icon from "../components/Icon";
+import type { ToolbarCommandId } from "../controllers/commands/toolbarCommands";
 
-// Definition of complete interface requirements mapping to RibbonButton instances
 interface RibbonButtonProps {
     icon: string | ReactNode;
     label: string;
     hotkey?: string;
     instruction?: string;
     onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+    commandId?: ToolbarCommandId;
+    commandPayload?: unknown;
+    onCommand?: (
+        commandId: ToolbarCommandId,
+        payload?: unknown,
+        event?: React.MouseEvent<HTMLButtonElement>
+    ) => void;
     disabled?: boolean;
     active?: boolean;
     textColor?: string;
@@ -23,6 +30,9 @@ export default function RibbonButton({
     hotkey,
     instruction,
     onClick,
+    commandId,
+    commandPayload,
+    onCommand,
     disabled = false,
     active = false,
     textColor = "#333333",
@@ -34,7 +44,6 @@ export default function RibbonButton({
     const [showTooltip, setShowTooltip] = useState<boolean>(false);
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Triggers custom enhanced tooltip display with a 400ms delay to avoid accidental hover triggers
     const handleMouseEnter = () => {
         if (disabled) return;
         timeoutRef.current = setTimeout(() => {
@@ -47,7 +56,6 @@ export default function RibbonButton({
         setShowTooltip(false);
     };
 
-    // Clean up timers on unmount to prevent memory leaks
     useEffect(() => {
         return () => {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -61,13 +69,11 @@ export default function RibbonButton({
         cursor: disabled ? "not-allowed" : "pointer"
     };
 
-    // Helper to render icon depending on whether it is a custom string name or a raw character
     const renderIcon = (size: number): ReactNode => {
         if (typeof icon === "string" && icon.length > 2) {
             return <Icon name={icon} size={size} className="ribbon-icon" />;
         }
         
-        // --- CHANGE 1: Update fontSize configurations mapping strictly into text / emoji raw instances ---
         const emojiFontSize = size === 64 ? "52px" : (size === 20 ? "16px" : "28px"); 
         
         return <span style={{ fontSize: emojiFontSize, lineHeight: "20px" }}>{icon}</span>;
@@ -117,8 +123,16 @@ export default function RibbonButton({
         );
     }
 
+    const handleButtonClick = (event: React.MouseEvent<HTMLButtonElement>): void => {
+        if (commandId && onCommand) {
+            onCommand(commandId, commandPayload, event);
+            return;
+        }
+        onClick?.(event);
+    };
+
     const buttonProps: ComponentPropsWithoutRef<"button"> = {
-        onClick: disabled ? undefined : onClick,
+        onClick: disabled ? undefined : handleButtonClick,
         disabled,
         style: buttonStyle
     };
@@ -135,15 +149,11 @@ export default function RibbonButton({
                 <span className="ribbon-label">{label}</span>
             </button>
 
-            {/* Custom Enhanced Tooltip Layout */}
             {showTooltip && (hotkey || instruction) && (
                 <div className="ribbon-tooltip-box">
-                    {/* Left Panel: Upscaled Icon Visual */}
                     <div className="ribbon-tooltip-left">
-                        {/* --- CHANGE 2: Double upscaled visualization element bounds parameters (32 -> 64) --- */}
                         {renderIcon(64)} 
                     </div>
-                    {/* Right Panel: Functional Context & Shortcut Information */}
                     <div className="ribbon-tooltip-right">
                         <div className="ribbon-tooltip-header">
                             <span className="ribbon-tooltip-title">{label}</span>

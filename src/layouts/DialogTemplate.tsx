@@ -1,4 +1,29 @@
-import { useEffect } from "react";
+import { useEffect, ReactNode, HTMLAttributes, CSSProperties } from "react";
+
+// Define the shape of custom styles if passed dynamically
+interface CustomStyles {
+    overlay?: CSSProperties;
+    container?: CSSProperties;
+    header?: CSSProperties;
+    body?: CSSProperties;
+    footer?: CSSProperties;
+}
+
+// Define the component's props interface
+interface DialogTemplateProps {
+    isOpen: boolean;
+    onClose: () => void;
+    title: string;
+    icon?: ReactNode;
+    width?: string;
+    maxHeight?: string;
+    backgroundColor?: string;
+    customStyle?: CustomStyles;
+    headerProps?: HTMLAttributes<HTMLDivElement>;
+    headerActions?: ReactNode;
+    footerActions?: ReactNode;
+    children: ReactNode;
+}
 
 export default function DialogTemplate({
     isOpen,
@@ -13,12 +38,14 @@ export default function DialogTemplate({
     headerActions,
     footerActions,
     children
-}) {
+}: DialogTemplateProps) {
     useEffect(() => {
         if (!isOpen) return;
-        const handleKeyDown = (e) => {
+        
+        const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === "Escape") onClose();
         };
+        
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, [isOpen, onClose]);
@@ -62,14 +89,13 @@ export default function DialogTemplate({
                         display: "flex", 
                         alignItems: "center", 
                         justifyContent: "space-between", 
-                        // Reduced padding for a more compact header
                         padding: "10px 14px", 
                         borderBottom: "1px solid rgba(0, 0, 0, 0.05)",
                         ...customStyle.header
                     }}
                 >
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        {icon && icon}
+                        {icon}
                         <h3 style={{ margin: 0, fontSize: "15px", fontWeight: "700", color: "#1e293b" }}>
                             {title}
                         </h3>
@@ -96,11 +122,9 @@ export default function DialogTemplate({
                     style={{
                         display: "flex",
                         flexDirection: "column",
-                        // Consistent vertical gap
                         gap: "8px", 
                         maxHeight: maxHeight,
                         overflowY: "auto",
-                        // Reduced padding for better alignment with boundaries
                         padding: "12px 14px", 
                         backgroundColor: backgroundColor,
                         ...customStyle.body
@@ -114,7 +138,6 @@ export default function DialogTemplate({
                     <div 
                         className="modal-footer" 
                         style={{ 
-                            // Compact footer padding
                             padding: "10px 14px", 
                             display: "flex", 
                             alignItems: "center",

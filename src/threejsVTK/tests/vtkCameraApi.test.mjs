@@ -56,7 +56,7 @@ t("setAspect(2) giữ chiều cao, co giãn chiều rộng (ortho)", () => {
   assert.equal(cam.three.right - cam.three.left, h * 2);
 });
 
-t("setAspect khớp đúng công thức resize() đang viết tay trong Scene.jsx", () => {
+t("setAspect matches the resize formula used in Scene.tsx", () => {
   const cam = makeFacade();
   const a = 1920 / 1080;
   const halfH = (cam.three.top - cam.three.bottom) / 2;   // công thức cũ trong Scene
@@ -65,7 +65,7 @@ t("setAspect khớp đúng công thức resize() đang viết tay trong Scene.js
   assert.ok(Math.abs(cam.three.right - (halfH * a)) < 1e-9);
 });
 
-t("setClippingRange chấp nhận near ÂM (ortho, mặt cắt CAD)", () => {
+t("setClippingRange chấp nhận negative near (ortho, mặt cắt CAD)", () => {
   const cam = makeFacade();
   cam.setClippingRange(-50, 50);
   assert.deepEqual(cam.getClippingRange(), [-50, 50]);

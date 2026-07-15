@@ -1,26 +1,25 @@
 // Interaction/Picking/ActorTopology.js
 // ---------------------------------------------------------------------------
-// Dựng & cache cấu trúc topology của 1 Actor (từ actor.surface.geometry) để
-// SelectionHighlighter khoanh đúng phần tử/điểm bị pick (Surface/Element/
-// Point/Node/Edge), và (nếu có) một picker screen-space dùng queryVerts để
-// tìm điểm/cạnh gần con trỏ khi không raycast trúng mặt nào.
+// Builds and caches topology for one Actor from actor.surface.geometry so
+// SelectionHighlighter can outline the picked Surface, Element, Point, Node,
+// or Edge. Screen-space pickers may also use queryVerts to find nearby points
+// or edges when raycasting does not hit a face.
 //
-// TOÀN BỘ toạ độ trả ra (wpos, cornerOf().pos, nodePosition, weldedPosition,
-// chain.positions, triCentroid) đều ở LOCAL SPACE của actor.surface.geometry
-// — vì SelectionHighlighter luôn `actor.add(overlay)`, để actor.matrixWorld
-// tự áp lên overlay. KHÔNG trả world space ở đây.
+// All returned coordinates (wpos, cornerOf().pos, nodePosition,
+// weldedPosition, chain.positions, triCentroid) are in actor-local geometry
+// space. SelectionHighlighter attaches overlays to the actor, so actor.matrixWorld
+// applies the final transform. This module intentionally does not return world
+// coordinates.
 //
-// Thuật ngữ:
-//   - "raw vertex index" / "corner"  : index thẳng vào geometry.attributes.position.
-//     Đây cũng chính là giá trị Picker.js trả về trong pickResult.localPointIndex
-//     (hit.face.a/b/c), nên PickMode.POINT dùng thẳng id này, không cần map qua topology.
-//   - "cell id" / "node id"          : id vật lý (FEA) lấy từ geometry.userData.cellMap /
-//     .pointMap, giống hệt cách Picker.js._cellId / ._pointId tính — nếu actor không có
-//     cellMap/pointMap thì cellId = faceIndex, nodeId = raw vertex index (identity).
-//   - "welded vertex" ("w..." trong triRaw/tri/wpos/wcount) : vertex đã gộp theo
-//     toạ độ (hàn theo dung sai hình học), KHÔNG liên quan gì đến node FEA — dùng
-//     để dò biên/adjacency (boundary edge, cell outline) một cách ổn định dù mesh
-//     bị duplicate vertex (flat shading non-indexed).
+// Terms:
+//   - "raw vertex index" / "corner": direct index into geometry.attributes.position.
+//     Picker.js returns the same value as pickResult.localPointIndex, so
+//     PickMode.POINT can use it directly.
+//   - "cell id" / "node id": physical FEA ids from geometry.userData.cellMap
+//     and pointMap. Without those maps, cellId = faceIndex and nodeId = raw vertex index.
+//   - "welded vertex": geometry vertices merged by position tolerance. This is
+//     independent from FEA node ids and is used for stable boundary and adjacency
+//     detection when flat-shaded or imported meshes duplicate vertices.
 // ---------------------------------------------------------------------------
 import * as THREE from "three";
 
@@ -28,20 +27,20 @@ const _va = new THREE.Vector3();
 const _vb = new THREE.Vector3();
 const _vc = new THREE.Vector3();
 
-/** Cache theo actor. Value bị bỏ (rebuild) nếu geometry.uuid đổi (vd. sau actor.update()). */
+/** Actor cache. Values are rebuilt when geometry.uuid changes, for example after actor.update(). */
 const _cache = new WeakMap();
 
 function edgeKey(u, v) {
     return u < v ? `${u}_${v}` : `${v}_${u}`;
 }
 
-/** Xây lưới băm không gian đơn giản để hàn (weld) các vertex trùng/gần vị trí. */
+/** Builds a simple spatial hash to weld coincident or near-coincident vertices. */
 function buildWeldMap(posAttr, tolerance) {
     const n = posAttr.count;
     const cell = Math.max(tolerance, 1e-12);
-    const buckets = new Map(); // "ix_iy_iz" -> [weldedId, ...] (ứng viên cùng ô)
+    const buckets = new Map(); // "ix_iy_iz" -> [weldedId, ...] candidates in the same cell
     const rawToWelded = new Int32Array(n);
-    const weldedFirstRaw = []; // weldedId -> raw index đại diện (để lấy vị trí)
+    const weldedFirstRaw = []; // weldedId -> representative raw index used for position lookup
 
     const quantize = (v) => Math.round(v / cell);
     const p = new THREE.Vector3();
@@ -51,7 +50,7 @@ function buildWeldMap(posAttr, tolerance) {
         const qx = quantize(p.x), qy = quantize(p.y), qz = quantize(p.z);
 
         let found = -1;
-        // Chỉ cần quét ô hiện tại + 26 ô lân cận vì tolerance == kích thước ô
+        // Scan the current cell and its 26 neighbors because cell size equals tolerance.
         for (let dx = -1; dx <= 1 && found < 0; dx++) {
             for (let dy = -1; dy <= 1 && found < 0; dy++) {
                 for (let dz = -1; dz <= 1 && found < 0; dz++) {
@@ -96,12 +95,12 @@ export class ActorTopology {
         const posAttr = geometry.getAttribute("position");
         if (!posAttr) throw new Error("ActorTopology: geometry has no position attribute");
 
-        // ---- bbox / diag (dùng làm epsilon cho weld, offset chống z-fight, v.v.) ----
+        // ---- bbox / diag used for weld epsilon, overlay offsets, and similar scales ----
         this.bbox = new THREE.Box3().setFromBufferAttribute(posAttr);
         const size = this.bbox.getSize(new THREE.Vector3());
         this.diag = size.length() || 1;
 
-        // ---- triRaw: chỉ số vertex thô (index thẳng vào position attribute) ----
+        // ---- triRaw: raw vertex indices, directly indexing the position attribute ----
         const index = geometry.getIndex();
         let triRaw;
         if (index) {
@@ -115,7 +114,7 @@ export class ActorTopology {
         this.triRaw = triRaw;
         this.triCount = triRaw.length / 3;
 
-        // ---- weld: gộp vertex theo vị trí -> tri (index welded), wpos, wcount ----
+        // ---- weld vertices by position -> tri (welded indices), wpos, wcount ----
         const tol = weldTolerance ?? Math.max(1e-6, this.diag * 1e-5);
         const { rawToWelded, weldedFirstRaw } = buildWeldMap(posAttr, tol);
         this.wcount = weldedFirstRaw.length;
@@ -133,7 +132,7 @@ export class ActorTopology {
         for (let i = 0; i < triRaw.length; i++) tri[i] = rawToWelded[triRaw[i]];
         this.tri = tri;
 
-        /** @type {Map<number, number[]>} weldedId -> danh sách raw vertex index đã gộp vào nó */
+        /** @type {Map<number, number[]>} weldedId -> raw vertex indices merged into it */
         this.weldedToCorner = new Map();
         for (let raw = 0; raw < rawToWelded.length; raw++) {
             const w = rawToWelded[raw];
@@ -142,10 +141,10 @@ export class ActorTopology {
         }
         this._rawToWelded = rawToWelded;
 
-        // ---- corners: truy cập trực tiếp position attribute theo raw vertex index ----
+        // ---- corners: direct position attribute access by raw vertex index ----
         this.corners = posAttr;
 
-        // ---- cell / surface mapping (giống hệt logic Picker.js._cellId) ----
+        // ---- cell / surface mapping, matching Picker.js._cellId logic ----
         const cellMap = geometry.userData?.cellMap ?? null;
         const pointMap = geometry.userData?.pointMap ?? null;
         const surfaceMap = geometry.userData?.surfaceMap ?? null;
@@ -158,7 +157,7 @@ export class ActorTopology {
         this.cellTris = new Map();
         /** @type {Map<*, number[]>} surfaceId -> triangle indices */
         this.surfaces = new Map();
-        /** @type {Array<*>} tra cứu nhanh triIndex -> surfaceId (tránh quét this.surfaces mỗi lần) */
+        /** @type {Array<*>} Fast triIndex -> surfaceId lookup. */
         this._triSurfaceOf = new Array(this.triCount);
 
         for (let t = 0; t < this.triCount; t++) {
@@ -174,14 +173,14 @@ export class ActorTopology {
                 const g = groups.find((gr) => vStart >= gr.start && vStart < gr.start + gr.count);
                 surfaceId = g ? (g.materialIndex ?? 0) : 0;
             } else {
-                surfaceId = 0; // Actor hiện chỉ có 1 surface -> mọi tam giác thuộc surface "0"
+                surfaceId = 0; // Actor currently has one surface, so all triangles belong to surface 0.
             }
             this._triSurfaceOf[t] = surfaceId;
             if (!this.surfaces.has(surfaceId)) this.surfaces.set(surfaceId, []);
             this.surfaces.get(surfaceId).push(t);
         }
 
-        // ---- node reverse-lookup: nodeId -> 1 raw vertex đại diện (để lấy vị trí) ----
+        // ---- node reverse lookup: nodeId -> one representative raw vertex ----
         this._nodeToRaw = new Map();
         if (pointMap) {
             for (let raw = 0; raw < pointMap.length; raw++) {
@@ -189,14 +188,13 @@ export class ActorTopology {
                 if (!this._nodeToRaw.has(nodeId)) this._nodeToRaw.set(nodeId, raw);
             }
         }
-        // Không có pointMap -> nodeId chính là raw vertex index (identity), khỏi cần map.
+        // Without pointMap, nodeId is the raw vertex index and no map is needed.
 
-        // ---- boundary edge chains (dùng cho PickMode.EDGE) ----
-        // Cạnh "biên" = cạnh chỉ thuộc đúng 1 tam giác trong không gian welded (tri).
-        // Đơn giản hoá: mỗi cạnh biên là 1 chain riêng (2 đỉnh), KHÔNG nối chuỗi các
-        // cạnh liền kề thành 1 polyline dài — đủ dùng để khoanh sáng, nhưng nếu cần
-        // polyline liền mạch (vd. để đo chiều dài 1 đường biên nhiều đoạn) sẽ cần
-        // ghép thêm 1 bước graph-walk nữa.
+        // ---- boundary edge chains used by PickMode.EDGE ----
+        // A boundary edge belongs to exactly one triangle in welded-vertex space.
+        // Each boundary edge is stored as an independent two-vertex chain. This is
+        // sufficient for highlighting; continuous polylines can be added later with
+        // a graph-walk merge step.
         const edgeTriCount = new Map();
         for (let t = 0; t < this.triCount; t++) {
             const o = t * 3;
@@ -236,21 +234,21 @@ export class ActorTopology {
     trianglesOfCell(cellId) { return this.cellTris.get(cellId) ?? []; }
     trianglesOfSurface(surfaceId) { return this.surfaces.get(surfaceId) ?? []; }
 
-    // --------------------------------------------------------- id -> vị trí
+    // --------------------------------------------------------- id -> position
 
-    /** Vị trí (local space) của 1 raw vertex/corner — dùng cho PickMode.POINT. */
+    /** Local-space position of one raw vertex/corner, used by PickMode.POINT. */
     cornerOf(rawVertexIndex) {
         if (rawVertexIndex == null || rawVertexIndex < 0 || rawVertexIndex >= this.corners.count) return null;
         return { pos: new THREE.Vector3().fromBufferAttribute(this.corners, rawVertexIndex) };
     }
 
-    /** Vị trí (local space) của 1 node vật lý (id từ pointMap) — dùng cho PickMode.NODE. */
+    /** Local-space position of one physical node id from pointMap, used by PickMode.NODE. */
     nodePosition(nodeId, target = new THREE.Vector3()) {
         const raw = this._pointMap ? (this._nodeToRaw.get(nodeId) ?? nodeId) : nodeId;
         return target.fromBufferAttribute(this.corners, raw);
     }
 
-    /** Vị trí (local space) của 1 welded vertex (id nội bộ trong tri/wpos). */
+    /** Local-space position of one welded vertex id from tri/wpos. */
     weldedPosition(weldedId, target = new THREE.Vector3()) {
         return target.set(
             this.wpos[weldedId * 3],
@@ -259,7 +257,7 @@ export class ActorTopology {
         );
     }
 
-    /** Trọng tâm (local space) của 1 tam giác, theo raw vertex index (triRaw). */
+    /** Local-space centroid of one triangle using triRaw indices. */
     triCentroid(triIndex, target = new THREE.Vector3()) {
         const o = triIndex * 3;
         const a = this.triRaw[o], b = this.triRaw[o + 1], c = this.triRaw[o + 2];
@@ -270,16 +268,12 @@ export class ActorTopology {
     }
 
     /**
-     * Tìm các raw vertex index nằm trong bán kính `radius` (local space) quanh
-     * `point` — dùng bởi picker screen-space (PickMode EDGE/POINT/NODE, xem
-     * PickMode.isScreenSpaceMode) khi raycast không trúng mặt nào để bù trừ
-     * việc bắt điểm/cạnh "lơ lửng" ngoài rìa mesh.
-     * ⚠ Chưa có nơi gọi thực tế trong các file hiện có — chữ ký được suy ra
-     *   từ tên hàm + REQUIRED interface, điều chỉnh lại nếu call site thật có
-     *   dạng khác (vd. truyền NDC + camera thay vì điểm local + bán kính).
-     * @param {THREE.Vector3} point  Điểm truy vấn, local space.
-     * @param {number} radius        Bán kính truy vấn, local space.
-     * @returns {number[]} Danh sách raw vertex index trong bán kính.
+     * Finds raw vertex indices inside `radius` around `point` in local space.
+     * Screen-space pickers can use this for EDGE/POINT/NODE modes when raycasting
+     * misses the surface mesh.
+     * @param {THREE.Vector3} point Query point in local space.
+     * @param {number} radius Query radius in local space.
+     * @returns {number[]} Raw vertex indices inside the radius.
      */
     queryVerts(point, radius) {
         const out = [];
@@ -294,22 +288,21 @@ export class ActorTopology {
 
     // ------------------------------------------------------------- lifecycle
 
-    /** True nếu geometry của actor đã đổi kể từ lúc topology này được dựng. */
+    /** Returns true when the actor geometry changed since this topology was built. */
     isStale() {
         return this.geometry !== this.actor.surface?.geometry
             || this._geometryUuid !== this.actor.surface?.geometry?.uuid;
     }
 
     /**
-     * Lấy (và cache) topology của 1 actor. Tự rebuild nếu geometry đã đổi
-     * (vd. sau actor.update() nạp lại mesh).
+     * Gets and caches topology for one actor. Rebuilds automatically when geometry changes.
      * @param {THREE.Object3D} actor
      * @param {Object} [options]
-     * @param {number} [options.weldTolerance]  Ghi đè dung sai hàn vertex mặc định.
+     * @param {number} [options.weldTolerance]  Overrides the default vertex weld tolerance.
      */
     static get(actor, options) {
         if (!actor?.surface?.geometry) {
-            throw new Error("ActorTopology.get: actor không có surface.geometry hợp lệ");
+            throw new Error("ActorTopology.get: actor does not have a valid surface.geometry");
         }
         let topo = _cache.get(actor);
         if (!topo || topo.isStale()) {
@@ -319,7 +312,7 @@ export class ActorTopology {
         return topo;
     }
 
-    /** Xoá cache topology của 1 actor (vd. trước khi actor.dispose()). */
+    /** Clears cached topology for one actor, for example before actor.dispose(). */
     static invalidate(actor) {
         _cache.delete(actor);
     }

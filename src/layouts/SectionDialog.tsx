@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import DialogTemplate from "./DialogTemplate.jsx";
+import DialogTemplate from "./DialogTemplate";
 
 const CLIP_AXES = [
     { key: "x", label: "X", index: 0, color: 0xff5252 },
@@ -104,7 +104,7 @@ export default function SectionDialog({ isOpen, onClose, clip, clipBounds, setAx
         container: {
             position: "absolute", left: 0, top: 0,
             transform: `translate(${position.x}px, ${position.y}px)`,
-            pointerEvents: "auto", minWidth: "400px", width: "400px", // Tăng nhẹ width để vừa thêm checkbox
+            pointerEvents: "auto", minWidth: "400px", width: "400px", // Slightly wider to fit the extra checkbox
             backgroundColor: isDark ? "#202020" : "#f1f3f5"
         },
         header: { cursor: "move" },
@@ -129,28 +129,28 @@ export default function SectionDialog({ isOpen, onClose, clip, clipBounds, setAx
                 
                 return (
                     <div key={ax.key} style={{ display: "flex", alignItems: "center", gap: "8px", margin: "3px 0" }}>
-                        {/* Checkbox Kích hoạt mặt cắt (Clip) */}
+                        {/* Enable section cut checkbox */}
                         <label style={{ minWidth: "42px", display: "flex", alignItems: "center", gap: "4px", cursor: "pointer" }}>
                             <input type="checkbox" checked={s.on} onChange={(e) => setAxis(ax.key, { on: e.target.checked })} />
                             <span style={{ color: `#${ax.color.toString(16).padStart(6, "0")}`, fontWeight: 700 }}>{ax.label}</span>
                         </label>
 
-                        {/* Checkbox Ẩn/Hiện Plane Hình Học (Show) */}
+                        {/* Show or hide the section plane helper */}
                         <label style={{ display: "flex", alignItems: "center", gap: "2px", fontSize: "11px", cursor: "pointer", opacity: s.on ? 1 : 0.5 }}>
                             <input 
                                 type="checkbox" 
-                                checked={s.showPlane ?? true} // Giả định mặc định là true nếu chưa định nghĩa
+                                checked={s.showPlane ?? true} // Default to true when not defined
                                 disabled={!s.on}
                                 onChange={(e) => setAxis(ax.key, { showPlane: e.target.checked })} 
                             />
                             <span>Show</span>
                         </label>
 
-                        {/* Slider điều chỉnh vị trí */}
+                        {/* Position slider */}
                         <input type="range" min={mn} max={mx} step={step} value={s.pos} disabled={!s.on}
                             onChange={(e) => setAxis(ax.key, { pos: parseFloat(e.target.value) || 0 })} style={{ flex: 1 }} />
 
-                        {/* Input số nhập trực tiếp */}
+                        {/* Direct numeric input */}
                         <input type="number" min={mn} max={mx} step={step} value={textInputs[ax.key]} disabled={!s.on}
                             onChange={(e) => setTextInputs(prev => ({ ...prev, [ax.key]: e.target.value }))}
                             onBlur={(e) => handleCommitValue(ax.key, e.target.value, mn, mx)}
@@ -158,7 +158,7 @@ export default function SectionDialog({ isOpen, onClose, clip, clipBounds, setAx
                             style={{ width: "65px", textAlign: "right", background: colors.inputBg, color: colors.text, border: `1px solid ${colors.inputBorder}`, borderRadius: "4px", padding: "2px" }}
                         />
 
-                        {/* Nút lật hướng cắt (Flip) */}
+                        {/* Flip cut direction button */}
                         <button disabled={!s.on} onClick={() => setAxis(ax.key, { flip: !s.flip })} style={{ padding: "2px 6px", fontSize: "11px" }}>
                             {s.flip ? "⇄" : "Flip"}
                         </button>

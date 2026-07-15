@@ -1,5 +1,5 @@
-// index.js — API công khai DUY NHẤT của threejsVTK.
-// Deep import (threejs-vtk/src/filters/...) bị chặn qua "exports" trong package.json.
+// index.js - the single public API surface of threejsVTK.
+// Deep imports (threejs-vtk/src/filters/...) are blocked by the package exports map.
 
 // ── core ────────────────────────────────────────────────────────────────────
 export { DataObject } from "./core/DataObject.js";
@@ -21,11 +21,12 @@ export { VTKLegacyReader } from "./io/VTKLegacyReader.js";
 export { VTPReader } from "./io/VTPReader.js";
 export { DataArrayCodec } from "./io/dataArrayCodec.js";
 
-// ── geometry (thuần BufferGeometry) ─────────────────────────────────────────
+// ── geometry (raw BufferGeometry helpers) ───────────────────────────────────
 export { weldVertices } from "./geometry/weld.js";
 export { extractByTopology } from "./geometry/surfaceTopology.js";
 export { extractByVisibility } from "./geometry/surfaceVisibility.js";
 export { FeatureEdges } from "./geometry/featureEdges.js";
+export { computeSceneBounds, SectionPlaneHelperActor } from "./utils/scenePrimitives.js";
 
 // ── filters (PolyData -> PolyData) ──────────────────────────────────────────
 export { Filter } from "./filters/Filter.js";
@@ -51,11 +52,16 @@ export { Actor } from "./actors/Actor.js";
 export { LineActor } from "./actors/LineActor.js";
 export { SectionActor } from "./actors/SectionActor.js";
 export { VectorGlyphActor } from "./actors/VectorGlyphActor.js";
+export { GridActor } from "./actors/GridActor.js";
+
+// ── lights ─────────────────────────────────────────────────────────────────
+export { AmbientLightActor, DirectionalLightActor } from "./lights/LightActors.js";
 
 // ── widgets ─────────────────────────────────────────────────────────────────
 export { ScalarBarActor } from "./widgets/ScalarBarActor.js";
 export { OrientationTriadActor } from "./widgets/OrientationTriadActor.js";
-// File đã đổi tên; tên class giữ nguyên để không phá code cũ. Alias là tên nên dùng.
+// The file was renamed, but the class name is kept for compatibility.
+// CameraNavigationActor is the preferred export name.
 export { CameraNavigationActor, CameraNavigationActor as NavigationCube } from "./widgets/NavigationCube.js";
 export { MeasurementRulerActor, MeasurementRulerActor as MeasurementRuler } from "./widgets/MeasurementRuler.js";
 
@@ -66,7 +72,6 @@ export { makeContourMaterial } from "./rendering/materials/ContourShaderMaterial
 export { makeHatchMaterial } from "./rendering/materials/HatchMaterial.js";
 
 // ── camera ──────────────────────────────────────────────────────────────────
-// LƯU Ý: camera/Camera.js hiện là PLACEHOLDER. Chép Rendering/Camera.js của bạn đè lên.
 export { Camera } from "./camera/Camera.js";
 export { applyVTKCameraApi, VTK_CAMERA_API } from "./camera/vtkCameraApi.js";
 export { CameraState } from "./camera/CameraState.js";
@@ -87,7 +92,6 @@ export { Picker } from "./interaction/picking/Picker.js";
 export { SubPicker } from "./interaction/picking/SubPicker.js";
 export { PickingController } from "./interaction/picking/PickingController.js";
 export { PickMode } from "./interaction/picking/PickMode.js";
-// LƯU Ý: ActorTopology hiện là PLACEHOLDER (file gốc 0 byte).
 export { ActorTopology } from "./interaction/picking/ActorTopology.js";
 
 export { ActorHighlighter, DEFAULT_HIGHLIGHT_STYLE } from "./interaction/highlight/ActorHighlighter.js";

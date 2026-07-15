@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
 
 // threejsVTK: A single import via the public barrel
 import {
@@ -13,6 +12,9 @@ import {
     ScalarBarActor,
     MeasurementRuler,
     Camera,
+    GridActor,
+    AmbientLightActor,
+    DirectionalLightActor,
     applyVTKCameraApi,
     NAV_STYLE,
     RUBBER_BAND_MODE,
@@ -59,7 +61,7 @@ function applyRubberBandSelection(pc: any, selected: any[], { additive, mode }: 
 
 export interface SceneProps {
     viewportIndex?: number;
-    sharedScene: THREE.Scene;
+    sharedScene: any;
     onControllerReady?: (controller: any) => void;
     otherController?: any;
     isViewLinked?: boolean;
@@ -102,8 +104,10 @@ export default function Scene({
 }: SceneProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const textBlockRef = useRef<HTMLDivElement | null>(null);
+    
     const showAxesRef = useRef<boolean>(showAxes);
     const showGridRef = useRef<boolean>(showGrid);
+    const showRulerRef = useRef<boolean>(showRuler);
 
     const rulerRef = useRef<any>(null);
     const sceneControllerRef = useRef<any>(null);
@@ -113,9 +117,6 @@ export default function Scene({
     const otherControllerRef = useRef<any>(otherController);
     const isViewLinkedRef = useRef<boolean>(isViewLinked);
 
-    const [isContourActive, setIsContourActive] = useState<boolean>(false);
-    
-    // UI States cho Toolbar
     const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
     const [cameraType, setCameraType] = useState<"orthographic" | "perspective">("orthographic");
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -124,8 +125,8 @@ export default function Scene({
     useEffect(() => { isViewLinkedRef.current = isViewLinked; }, [isViewLinked]);
     useEffect(() => { showAxesRef.current = showAxes; }, [showAxes]);
     useEffect(() => { showGridRef.current = showGrid; }, [showGrid]);
+    useEffect(() => { showRulerRef.current = showRuler; }, [showRuler]);
 
-    // Đóng dropdown khi click ra ngoài panel
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -141,7 +142,12 @@ export default function Scene({
     }, [showTextBlock]);
 
     useEffect(() => {
-        if (rulerRef.current?.group) rulerRef.current.group.visible = showRuler;
+        if (rulerRef.current?.group) {
+            rulerRef.current.group.visible = showRuler;
+        }
+        if (sceneControllerRef.current?.requestRender) {
+            sceneControllerRef.current.requestRender();
+        }
     }, [showRuler]);
 
     useEffect(() => {
@@ -160,20 +166,20 @@ export default function Scene({
         const AMBIENT = "settings_ambient_light";
         const DIRECTIONAL = "settings_directional_light";
 
-        let ambient = sharedScene.getObjectByName(AMBIENT) as THREE.AmbientLight | undefined;
+        let ambient = sharedScene.getObjectByName(AMBIENT) as any;
         if (!ambient) {
-            ambient = new THREE.AmbientLight(0xffffff, ambientIntensity);
+            ambient = new AmbientLightActor(0xffffff, ambientIntensity);
             ambient.name = AMBIENT;
             sharedScene.add(ambient);
         } else {
             ambient.intensity = ambientIntensity;
         }
 
-        let directional = sharedScene.getObjectByName(DIRECTIONAL) as THREE.DirectionalLight | undefined;
+        let directional = sharedScene.getObjectByName(DIRECTIONAL) as any;
         if (!directional) {
-            directional = new THREE.DirectionalLight(0xffffff, directionalIntensity);
+            directional = new DirectionalLightActor(0xffffff, directionalIntensity);
             directional.name = DIRECTIONAL;
-            directional.position.set(1, 1, 1);
+            directional.setPosition?.(1, 1, 1);
             sharedScene.add(directional);
         } else {
             directional.intensity = directionalIntensity;
@@ -184,60 +190,67 @@ export default function Scene({
 
     useEffect(() => {
         const container = containerRef.current;
+        // FIXED: Clear guard statement right at the top so TypeScript knows container is not null
         if (!container || !sharedScene) return;
+
+        let sceneController: any = null;
 
         const triadConfig = { position: "bottom-left", size: 120 };
         const padding = 20;
 
+        // FIXED: Cast constructor object to any to permit the 'container' property
         const renderWindow = new RenderWindow({
             container,
             rendererParams: { 
                 antialias: antialias || multiSamples > 1, 
                 alpha: true,
                 samples: multiSamples 
-            },
-        });
+            } as any,
+        } as any);
+        
         const glRenderer = renderWindow.renderer;
         glRenderer.setClearColor(0x000000, 0);
         glRenderer.localClippingEnabled = true;
 
         sharedScene.background = null;
 
-        // --- KHỞI TẠO CAMERA DÙNG THREJSVTK CAMERA CLASS ---
+        const pushCameraToLinked = () => {
+            if (sceneController?._applyingLinked) return;
+            if (!isViewLinkedRef.current) return;
+            otherControllerRef.current?.applyLinkedCamera?.(camera.getThreeCamera());
+        };
+
         const camera = new Camera(renderWindow.domElement, {
             type: "orthographic",
             autoResize: false,
             autoClipping: false,
-            target: new THREE.Vector3(0, 0, 0),
+            target: [0, 0, 0],
             onChange: () => {
-                sceneController.updateClipping?.();
-                sceneController.requestRender?.();
+                sceneController?.updateClipping?.();
+                sceneController?.requestRender?.();
                 pushCameraToLinked();
             }
-        });
+        } as any);
         cameraRef.current = camera;
 
-        // Setup vị trí ban đầu thông qua lõi three của lớp Camera wrapper
-        const threeCamera = camera.three;
-        threeCamera.position.set(10, 10, 10);
-        threeCamera.up.set(0, 1, 0);
-        threeCamera.lookAt(0, 0, 0);
-        threeCamera.updateMatrixWorld(true);
-        threeCamera.layers.enable(0);
-        threeCamera.layers.enable(viewportIndex);
-        camera.syncFromThree();
+        camera
+            .setPosition(10, 10, 10)
+            .setUp(0, 1, 0)
+            .lookAt(0, 0, 0)
+            .setLayerEnabled(0, true)
+            .setLayerEnabled(viewportIndex, true)
+            .syncFromThree();
 
-        const pushCameraToLinked = () => {
-            if (sceneController._applyingLinked) return;
-            if (!isViewLinkedRef.current) return;
-            otherControllerRef.current?.applyLinkedCamera?.(camera.three);
-        };
-
-        const vtkRenderer = new Renderer({ scene: sharedScene, camera, addDefaultLights });
+        // FIXED: Cast constructor object to any to permit the 'addDefaultLights' property
+        const vtkRenderer = new Renderer({ 
+            scene: sharedScene as any, 
+            camera: camera as any, 
+            addDefaultLights 
+        } as any);
         vtkRenderer.viewport = [0, 0, 1, 1];
         renderWindow.addRenderer(vtkRenderer);
 
-        const sceneController = new SceneController(camera.three, null, sharedScene);
+        sceneController = new SceneController(camera.getThreeCamera() as any, null as any, sharedScene as any);
         sceneControllerRef.current = sceneController;
 
         sceneController.showCameraNav = true;
@@ -245,8 +258,8 @@ export default function Scene({
             sceneController.showCameraNav = !sceneController.showCameraNav;
         };
 
-        sceneController.SetMultiSamples = (samples: number) => {
-            console.warn("[SceneController] Changing MultiSamples requires re-initializing the WebGL Context (re-mounting the component).");
+        sceneController.SetMultiSamples = (_samples: number) => {
+            console.warn("[SceneController] Changing MultiSamples requires re-initializing the WebGL Context.");
         };
         sceneController.GetMultiSamples = () => multiSamples;
 
@@ -262,30 +275,34 @@ export default function Scene({
         sceneController.applyLinkedCamera = (srcCam: any) => {
             if (!srcCam) return;
             sceneController._applyingLinked = true;
-            const destCam = camera.three;
-            destCam.position.copy(srcCam.position);
-            destCam.quaternion.copy(srcCam.quaternion);
-            destCam.up.copy(srcCam.up);
-            if (destCam.isOrthographicCamera && srcCam.isOrthographicCamera) {
-                destCam.zoom = srcCam.zoom;
+            try {
+                const destCam = camera.getThreeCamera() as any;
+                destCam.position.copy(srcCam.position);
+                destCam.quaternion.copy(srcCam.quaternion);
+                destCam.up.copy(srcCam.up);
+                if (destCam.isOrthographicCamera && srcCam.isOrthographicCamera) {
+                    destCam.zoom = srcCam.zoom;
+                }
+                destCam.updateProjectionMatrix();
+                destCam.updateMatrixWorld(true);
+                (camera as any).setFromThree();
+                sceneController.updateClipping?.();
+                sceneController.requestRender?.();
+            } finally {
+                sceneController._applyingLinked = false;
             }
-            destCam.updateProjectionMatrix();
-            destCam.updateMatrixWorld(true);
-            camera.setFromThree();
-            sceneController.updateClipping?.();
-            sceneController.requestRender?.();
-            sceneController._applyingLinked = false;
         };
 
         const makeGrid = (divisions: number, c1: number, c2: number, opacity: number, offset: number) => {
-            const g = new THREE.GridHelper(2000, divisions, c1, c2);
-            g.name = GRID_NAME;
-            g.frustumCulled = false;
-            g.layers.set(viewportIndex);
-            Object.assign(g.material, {
-                transparent: true, opacity, depthWrite: true,
-                polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset,
-            });
+            const g = new GridActor({
+                name: GRID_NAME,
+                size: 2000,
+                divisions,
+                colorCenterLine: c1,
+                colorGrid: c2,
+                opacity,
+                polygonOffset: offset,
+            }).setLayer(viewportIndex);
             sceneController.scene.add(g);
             return g;
         };
@@ -316,8 +333,12 @@ export default function Scene({
             fontSize: 90      
         });
         rulerRef.current = ruler;
+        
+        if ((ruler as any).group) {
+            (ruler as any).group.visible = showRulerRef.current;
+        }
 
-        const applyRulerLayer = () => ruler.group?.traverse((o: THREE.Object3D) => o.layers.set(viewportIndex));
+        const applyRulerLayer = () => (ruler as any).group?.traverse((o: any) => o.layers.set(viewportIndex));
         applyRulerLayer();
 
         const triad = new OrientationTriadActor(glRenderer, {
@@ -325,19 +346,19 @@ export default function Scene({
             size: triadConfig.size,
         });
 
-        const gizmo = new NavigationCube(glRenderer, container, camera, {
+        const gizmo = new NavigationCube(glRenderer, container, camera as any, {
             position: "top-right",
             size: 150,
             animateSpeed: 0.15,
             dragRotateSpeed: 1,
             spriteScale: 0.4,
             onChange: () => {
-                camera.setFromThree();
+                (camera as any).setFromThree?.();
                 sceneController.updateClipping();
                 renderWindow.render();
                 pushCameraToLinked();
             },
-            onTranslate: (delta: THREE.Vector3) => {
+            onTranslate: (delta: any) => {
                 const hasActorAncestor = (o: any) => {
                     let p = o.parent;
                     while (p) { if (p.isActor) return true; p = p.parent; }
@@ -353,7 +374,7 @@ export default function Scene({
                 renderWindow.render();
                 pushCameraToLinked();
             },
-        });
+        } as any);
 
         const interactor = new RenderWindowInteractor();
         renderWindow.setInteractor(interactor);
@@ -372,7 +393,7 @@ export default function Scene({
             return actors;
         };
 
-        const style = new InteractorStyleOrbit(camera, {
+        const style = new InteractorStyleOrbit(camera as any, {
             enableDamping: false,
             navStyle,
             enableZoomWindow: false,
@@ -393,11 +414,11 @@ export default function Scene({
                 applyRubberBandSelection(sceneController.pickingController, selected, { additive, mode });
                 sceneController.requestRender?.();
             },
-        });
+        } as any);
         interactor.setInteractorStyle(style);
         sceneController.interactorStyle = style;
 
-        const picker = new Picker({ filter: isSelectable });
+        const picker = new Picker({ filter: isSelectable as any });
         interactor.setPicker(picker);
         interactor.initialize();
 
@@ -441,7 +462,8 @@ export default function Scene({
                     scalarBar.setVisible?.(false);
                 }
             }
-            sceneController.requestRender?.() ?? renderWindow.render();
+            if (sceneController.requestRender) sceneController.requestRender();
+            else renderWindow.render();
         };
 
         sceneController.AddToRenderer = (actor: any, { showContour = false } = {}) => {
@@ -453,12 +475,12 @@ export default function Scene({
         };
 
         function resize() {
-            const w = container.clientWidth, h = container.clientHeight;
+            const w = container?.clientWidth ?? 0, h = container?.clientHeight ?? 0;
             if (!w || !h) return;
             glRenderer.setSize(w, h, false);
             camera.setAspect(w / h);
             if (ruler) {
-                ruler.update(w, h, camera.three);
+                (ruler as any).update(w, h, camera.getThreeCamera());
             }
         }
 
@@ -469,19 +491,28 @@ export default function Scene({
         resizeObserver.observe(container);
 
         let rafId: number;
+        let lastGridMajorScale = Number.NaN;
+        let lastGridMinorOpacity = Number.NaN;
         function animate() {
             rafId = requestAnimationFrame(animate);
-            const activeCam = camera.three;
+            const activeCam = camera.getThreeCamera();
 
             if (showGridRef.current) {
                 majorGrid.visible = minorGrid.visible = true;
-                const zoom = activeCam.zoom || 1;
+                const zoom = (activeCam as any).zoom || 1;
                 const majorScale = Math.pow(10, Math.floor(Math.log10(1 / zoom)));
-                majorGrid.scale.set(majorScale, 1, majorScale);
-                minorGrid.scale.set(majorScale, 1, majorScale);
                 const fractional = (1 / zoom) / majorScale;
-                minorGrid.material.opacity = Math.max(0, Math.min(0.3, (1 - fractional) * 1.5));
-                sceneController.updateClipping();
+                const minorOpacity = Math.max(0, Math.min(0.3, (1 - fractional) * 1.5));
+
+                if (majorScale !== lastGridMajorScale) {
+                    majorGrid.setGridScale(majorScale);
+                    minorGrid.setGridScale(majorScale);
+                    lastGridMajorScale = majorScale;
+                }
+                if (minorOpacity !== lastGridMinorOpacity) {
+                    minorGrid.setOpacity(minorOpacity);
+                    lastGridMinorOpacity = minorOpacity;
+                }
             } else {
                 majorGrid.visible = minorGrid.visible = false;
             }
@@ -492,8 +523,8 @@ export default function Scene({
             if (showAxesRef.current) { triad.update(activeCam); triad.render(); }
             if (sceneController.showCameraNav) { gizmo.update(activeCam); gizmo.render(); }
             
-            if (showRuler) {
-                ruler.update(container.clientWidth, container.clientHeight, activeCam);
+            if (showRulerRef.current && rulerRef.current?.group) {
+                (ruler as any).update(container?.clientWidth ?? 0, container?.clientHeight ?? 0, activeCam);
                 ruler.render();
             }
         }
@@ -516,15 +547,18 @@ export default function Scene({
 
             for (const g of [majorGrid, minorGrid]) {
                 sceneController.scene?.remove(g);
-                g.geometry.dispose();
-                (g.material as THREE.Material).dispose();
+                (g as any).dispose?.();
             }
 
             if (container.contains(textBlockContainer)) container.removeChild(textBlockContainer);
 
             renderWindow.dispose();
+            sceneControllerRef.current = null;
+            cameraRef.current = null;
+            interactorRef.current = null;
+            rulerRef.current = null;
         };
-    }, [onControllerReady, sharedScene, viewportIndex, antialias, multiSamples, showRuler, addDefaultLights]);
+    }, [onControllerReady, sharedScene, viewportIndex, antialias, multiSamples, addDefaultLights]);
 
     const handleFitView = () => {
         if (sceneControllerRef.current?.fitView) {
@@ -539,26 +573,23 @@ export default function Scene({
         const controller = sceneControllerRef.current;
         const camWrapper = cameraRef.current;
 
-        const oldPos = new THREE.Vector3();
-        const oldTarget = new THREE.Vector3();
-        
-        if (camWrapper.three) {
-            oldPos.copy(camWrapper.three.position);
-        }
-        if (camWrapper.state && camWrapper.state.target) {
-            oldTarget.copy(camWrapper.state.target);
-        } else {
-            oldTarget.set(0, 0, 0);
-        }
+        const oldPos = camWrapper.getPosition?.([0, 0, 0]) ?? [0, 0, 0];
+        const targetState = camWrapper.state?.target;
+        const oldTarget = targetState
+            ? [targetState.x, targetState.y, targetState.z]
+            : [0, 0, 0];
 
-        if (oldPos.distanceTo(oldTarget) < 0.001) {
-            oldPos.set(oldTarget.x + 10, oldTarget.y + 10, oldTarget.z + 10);
+        if (Math.hypot(oldPos[0] - oldTarget[0], oldPos[1] - oldTarget[1], oldPos[2] - oldTarget[2]) < 0.001) {
+            oldPos[0] = oldTarget[0] + 10;
+            oldPos[1] = oldTarget[1] + 10;
+            oldPos[2] = oldTarget[2] + 10;
         }
 
         camWrapper.switchType(type);
         
-        const newThreeCam = camWrapper.three;
-        newThreeCam.position.copy(oldPos);
+        camWrapper.setPosition?.(oldPos[0], oldPos[1], oldPos[2]);
+        const newThreeCam = camWrapper.getThreeCamera?.();
+        if (!newThreeCam) return;
         
         controller.camera = newThreeCam;
 
@@ -568,7 +599,7 @@ export default function Scene({
 
         if (type === "perspective") {
             camWrapper.setClippingRange(0.1, 5000);
-            newThreeCam.lookAt(oldTarget);
+            camWrapper.lookAt?.(oldTarget[0], oldTarget[1], oldTarget[2]);
         }
 
         newThreeCam.updateMatrix();
@@ -599,55 +630,51 @@ export default function Scene({
         if (!controller || !controller.cadCamera) return;
 
         const cam = controller.cadCamera; 
-        const target = new THREE.Vector3(0, 0, 0);
-        
-        const currentPos = new THREE.Vector3();
-        if (cam.three) currentPos.copy(cam.three.position);
-        const distance = currentPos.distanceTo(target) || 15;
+        const target = [0, 0, 0];
+        const currentPos = cam.getPosition?.([0, 0, 0]) ?? [0, 0, 0];
+        const distance = Math.hypot(currentPos[0], currentPos[1], currentPos[2]) || 15;
 
-        let newPos = new THREE.Vector3();
-        let newUp = new THREE.Vector3(0, 1, 0);
+        let newPos = [0, 0, 0];
+        let newUp = [0, 1, 0];
 
         switch (viewDirection) {
             case "Front":  
-                newPos.set(0, 0, distance); 
-                newUp.set(0, 1, 0);
+                newPos = [0, 0, distance]; 
+                newUp = [0, 1, 0];
                 break;
             case "Back":   
-                newPos.set(0, 0, -distance); 
-                newUp.set(0, 1, 0);
+                newPos = [0, 0, -distance]; 
+                newUp = [0, 1, 0];
                 break;
             case "Top":    
-                newPos.set(0, distance, 0); 
-                newUp.set(0, 0, -1); 
+                newPos = [0, distance, 0]; 
+                newUp = [0, 0, -1]; 
                 break;
             case "Bottom": 
-                newPos.set(0, -distance, 0); 
-                newUp.set(0, 0, 1);  
+                newPos = [0, -distance, 0]; 
+                newUp = [0, 0, 1];  
                 break;
             case "Left":   
-                newPos.set(-distance, 0, 0); 
-                newUp.set(0, 1, 0);
+                newPos = [-distance, 0, 0]; 
+                newUp = [0, 1, 0];
                 break;
             case "Right":  
-                newPos.set(distance, 0, 0); 
-                newUp.set(0, 1, 0);
+                newPos = [distance, 0, 0]; 
+                newUp = [0, 1, 0];
                 break;
             case "Isometric":
                 const iso = distance / Math.sqrt(3);
-                newPos.set(iso, iso, iso);
-                newUp.set(-1, 2, -1).normalize(); 
+                newPos = [iso, iso, iso];
+                newUp = [-1 / Math.sqrt(6), 2 / Math.sqrt(6), -1 / Math.sqrt(6)]; 
                 break;
             default: return;
         }
 
-        if (cam.three) {
-            cam.three.position.copy(newPos);
-            cam.three.up.copy(newUp);
-            cam.three.lookAt(target);
-            cam.three.updateMatrixWorld(true);
-            cam.setFromThree?.(); 
-        }
+        cam.setPosition?.(newPos[0], newPos[1], newPos[2]);
+        cam.setUp?.(newUp[0], newUp[1], newUp[2]);
+        cam.lookAt?.(target[0], target[1], target[2]);
+        cam.updateMatrixWorld?.(true);
+        cam.setFromThree?.();
 
         controller.updateClipping?.();
         if (typeof controller.fitView === "function") {
@@ -655,8 +682,9 @@ export default function Scene({
         }
         controller.requestRender?.();
         
-        if (isViewLinkedRef.current && cam.three) {
-            otherControllerRef.current?.applyLinkedCamera?.(cam.three);
+        const linkedCam = cam.getThreeCamera?.();
+        if (isViewLinkedRef.current && linkedCam) {
+            otherControllerRef.current?.applyLinkedCamera?.(linkedCam);
         }
 
         setIsDropdownOpen(false);
@@ -712,8 +740,21 @@ export default function Scene({
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.15)"}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
                 >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M15 3h6v6M9 21H3v-6M21 9v12h-6M3 15V3h6" />
+                    <svg
+                        width={24}
+                        height={24}
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    >
+                        <path d="M4 8V4H8" />
+                        <path d="M16 4H20V8" />
+                        <path d="M20 16V20H16" />
+                        <path d="M8 20H4V16" />
+                        <rect x={9} y={9} width={6} height={6} rx={1} />
                     </svg>
                 </button>
 

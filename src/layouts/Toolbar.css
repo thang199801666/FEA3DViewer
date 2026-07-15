@@ -7,7 +7,7 @@
     box-sizing: border-box;
 }
 
-/* Tabs điều hướng cấp cao */
+/* Top-level navigation tabs */
 .ribbon-tabs {
     display: flex;
     background-color: #e3e5e8;
@@ -39,17 +39,17 @@
     color: #111;
 }
 
-/* Thân Ribbon chứa các nhóm chức năng */
+/* Ribbon body containing command groups */
 .ribbon-body {
     display: flex;
     padding: 6px 10px;
     gap: 12px;
-    height: 95px; /* Tăng nhẹ chiều cao để tối ưu không gian thở cho nút bấm */
+    height: 95px; /* Slightly taller to give buttons more breathing room */
     align-items: stretch;
     box-sizing: border-box;
 }
 
-/* Phân chia cụm chức năng (Groups) giống phần mềm CAD */
+/* CAD-style command group separators */
 .ribbon-group {
     display: flex;
     flex-direction: column;
@@ -63,7 +63,7 @@
     padding-right: 0;
 }
 
-/* Vùng chứa các nút trong nhóm */
+/* Button container inside each group */
 .ribbon-group-content {
     display: flex;
     gap: 6px;
@@ -71,15 +71,15 @@
     flex-grow: 1;
 }
 
-/* Layout đặc biệt dạng lưới cho cụm nhiều hướng nhìn (Orientations) */
+/* Grid layout for orientation commands */
 .ribbon-group-content.grid-views-layout {
     display: grid;
-    grid-template-columns: repeat(4, auto); /* Chia làm 4 cột */
+    grid-template-columns: repeat(4, auto); /* Four-column grid */
     grid-gap: 3px;
     align-items: center;
 }
 
-/* Tiêu đề nhóm ở dưới đáy */
+/* Group title anchored at the bottom */
 .ribbon-group-title {
     font-size: 10px;
     color: #888;
@@ -89,12 +89,12 @@
     letter-spacing: 0.5px;
 }
 
-/* Nút bấm Ribbon tiêu chuẩn (Square Large Button) */
+/* Standard square ribbon button */
 .ribbon-btn {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: space-between; /* Đẩy icon lên đỉnh và label xuống đáy */
+    justify-content: space-between; /* Push icon upward and label downward */
     width: 60px;
     height: 62px;
     border: 1px solid transparent;
@@ -102,7 +102,7 @@
     cursor: pointer;
     border-radius: 4px;
     transition: all 0.15s ease;
-    padding: 2px 4px 4px 4px; /* Giảm padding đỉnh để dồn diện tích cho icon */
+    padding: 2px 4px 4px 4px; /* Reduce top padding to reserve more room for the icon */
     box-sizing: border-box;
     overflow: hidden;
 }
@@ -122,15 +122,15 @@
     color: #0b57d0;
 }
 
-/* Nút bấm định hướng chữ (FRONT, TOP, ISO...) */
+/* Text orientation buttons (FRONT, TOP, ISO, etc.) */
 .ribbon-btn-geo {
-    font-size: 10px; /* Thu nhỏ một chút để text 5-6 ký tự (BOTTOM) không bị tràn */
+    font-size: 10px; /* Slightly smaller so longer labels do not overflow */
     font-weight: 700;
     color: #555;
     background-color: #ffffff;
     border: 1px solid #dcdcdc;
     width: 52px;
-    height: 28px; /* Giảm chiều cao để xếp thành 2 hàng trong Grid */
+    height: 28px; /* Lower height so buttons fit into two grid rows */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -138,7 +138,7 @@
     transition: all 0.15s ease;
 }
 
-/* Nút ISO và Fit view nằm trong Grid chiếm độ rộng cân đối hơn */
+/* ISO and Fit View span a balanced width in the grid */
 .ribbon-btn-geo.ISO, 
 .grid-views-layout .ribbon-btn {
     width: 52px;
@@ -147,7 +147,7 @@
 }
 
 .grid-views-layout .ribbon-btn .ribbon-icon {
-    font-size: 14px; /* Thu nhỏ icon khi nằm trong layout grid 2 hàng */
+    font-size: 14px; /* Smaller icon size for the compact two-row grid */
 }
 
 .ribbon-btn-geo:hover {
@@ -156,24 +156,24 @@
     background-color: #f8f9fa;
 }
 
-/* VÙNG CHỨA ICON: ÉP EMOJI/IMAGE LỚN NHẤT CÓ THỂ */
+/* Icon area: maximize available image/SVG space */
 .ribbon-btn .ribbon-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;       /* Ép vùng chứa chiếm hết chiều rộng */
-    flex-grow: 1;      /* Ép vùng chứa chiếm hết chiều cao còn lại */
-    font-size: 26px;   /* Ghi đè kích thước font chữ/emoji */
+    width: 100%;       /* Fill the available width */
+    flex-grow: 1;      /* Fill the remaining height */
+    font-size: 26px;   /* Override text/emoji icon size */
 }
 
 .ribbon-btn .ribbon-icon img,
 .ribbon-btn .ribbon-icon svg {
-    width: 100%;       /* Ép thẻ SVG phóng to 100% bất chấp prop size của React */
-    height: 100%;      /* Ép thẻ SVG phóng to 100% bất chấp prop size của React */
+    width: 100%;       /* Force SVG to fill this slot regardless of React size props */
+    height: 100%;      /* Force SVG to fill this slot regardless of React size props */
     object-fit: contain;
 }
 
-/* Label bên dưới */
+/* Bottom label */
 .ribbon-btn .ribbon-label {
     font-size: 11px;
     white-space: nowrap;
@@ -181,10 +181,10 @@
     text-overflow: ellipsis;
     width: 100%;
     text-align: center;
-    margin-top: auto;     /* Luôn neo cố định dưới đáy button */
+    margin-top: auto;     /* Keep the label pinned to the bottom */
 }
 
-/* Trạng thái disable nút bấm */
+/* Disabled button state */
 .ribbon-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
@@ -201,7 +201,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    z-index: 9999; /* Luôn nổi lên trên cùng */
+    z-index: 9999; /* Keep above the rest of the UI */
 }
 
 .modal-container {
@@ -287,15 +287,14 @@
 }
 .confirm-btn:hover { background: #0062a3; }
 
-/* Đảm bảo overlay bao phủ toàn màn hình nhưng cho phép các đối tượng bên dưới hoạt động nếu cần, 
-   hoặc để chặn click tùy thuộc vào logic app của bạn */
+/* Full-screen overlay. Pointer behavior is controlled by the app logic. */
 .modal-overlay.backend-modal-clipping {
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.2); /* Làm mờ nhẹ nền */
+    background: rgba(0, 0, 0, 0.2); /* Slightly dim the background */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -303,18 +302,18 @@
     z-index: 9999;
 }
 
-/* Container của Dialog */
+/* Dialog container */
 .modal-overlay.backend-modal-clipping .modal-container {
     background: #fff;
     border-radius: 6px;
     padding: 16px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     position: relative;
-    /* Loại bỏ absolute mặc định để thuộc tính transform hoạt động chính xác từ tâm */
+    /* Remove the default absolute positioning so transforms originate from the center */
     will-change: transform; 
 }
 
-/* Style cho Theme Dark nếu có */
+/* Dark theme overrides */
 .theme-dark .modal-overlay.backend-modal-clipping .modal-container {
     background: #2d2d2d;
     color: #fff;
@@ -322,16 +321,16 @@
 }
 
 
-/* Container bọc ngoài Button và Tooltip */
+/* Button and tooltip wrapper */
 .ribbon-btn-wrapper {
     position: relative;
     display: inline-block;
 }
 
-/* Khung Tooltip chính */
+/* Main tooltip frame */
 .ribbon-tooltip-box {
     position: absolute;
-    top: 100%; /* Hiện ngay phía dưới button */
+    top: 100%; /* Show directly below the button */
     left: 4px;
     z-index: 9999;
     display: flex;
@@ -346,11 +345,11 @@
     box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.15);
     border-radius: 3px;
     font-family: inherit;
-    pointer-events: none; /* Tránh cản trở chuột */
+    pointer-events: none; /* Do not block pointer interactions */
     animation: fadeIn 0.15s ease-out;
 }
 
-/* Nếu ứng dụng đang dùng Dark Theme, bạn có thể override lại style của tooltip dựa trên theme toàn cục */
+/* Optional global dark theme tooltip override */
 [data-theme="dark"] .ribbon-tooltip-box {
     background-color: #2d2d30;
     color: #f1f1f1;
@@ -358,7 +357,7 @@
     box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.3);
 }
 
-/* Khối bên trái chứa Icon phóng to */
+/* Left block containing the enlarged icon */
 .ribbon-tooltip-left {
     display: flex;
     align-items: center;
@@ -367,7 +366,7 @@
     opacity: 0.85;
 }
 
-/* Khối bên phải chứa thông tin chữ */
+/* Right block containing text details */
 .ribbon-tooltip-right {
     display: flex;
     flex-direction: column;

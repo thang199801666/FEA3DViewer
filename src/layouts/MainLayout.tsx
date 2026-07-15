@@ -29,7 +29,7 @@ export default function MainLayout() {
 
     const [sceneVersion, setSceneVersion] = useState(0);
 
-    // --- State cho Custom Context Menu trên Scene ---
+    // --- Scene context menu state ---
     const [contextMenu, setContextMenu] = useState({ isOpen: false, x: 0, y: 0 });
 
     const workspaceRef = useRef(null);
@@ -119,7 +119,7 @@ export default function MainLayout() {
         };
     }, [isDragging, resize, stopResizing]);
 
-    // --- Xử lý tách biệt giữa Kéo Chuột (3D Pan/Rotate) và Click Chuột Phải ---
+    // --- Separate 3D drag gestures from static right-click context menu opening ---
     const handleSceneMouseDown = useCallback((e) => {
         if (e.button === 2) {
             rightClickStartPosRef.current = { x: e.clientX, y: e.clientY };
@@ -131,7 +131,7 @@ export default function MainLayout() {
             const deltaX = Math.abs(e.clientX - rightClickStartPosRef.current.x);
             const deltaY = Math.abs(e.clientY - rightClickStartPosRef.current.y);
 
-            // Chỉ kích hoạt Menu khi chênh lệch di chuyển nhỏ hơn 4px (coi như click tĩnh)
+            // Open the menu only when movement is small enough to count as a static click.
             if (deltaX < 4 && deltaY < 4) {
                 setContextMenu({
                     isOpen: true,
@@ -143,10 +143,10 @@ export default function MainLayout() {
     }, []);
 
     const handleSceneContextMenu = useCallback((e) => {
-        e.preventDefault(); // Luôn luôn chặn menu mặc định của trình duyệt
+        e.preventDefault();
     }, []);
 
-    // Tắt chuột phải trên Sidebar (Model Tree)
+    // Disable the browser context menu on the model tree sidebar.
     const handleSidebarContextMenu = useCallback((e) => {
         e.preventDefault();
     }, []);

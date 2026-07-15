@@ -46,6 +46,7 @@ export class ExtractSurfaceFilter extends Algorithm {
 function computeSurface(grid, passCellData) {
     const faceMap = new Map();
     const surfacePolys = [];
+    const surfaceStrips = [];
 
     // Reused scratch buffer for the sorted-vertex hash key (max 4 verts/face
     // across all supported solid cell types). Avoids allocating + spreading
@@ -57,6 +58,14 @@ function computeSurface(grid, passCellData) {
         const type = grid.cellTypes[ci];
         const start = grid.offsets[ci];
         const conn = grid.connectivity;
+
+        if (type === CellType.TRIANGLE_STRIP) {
+            const nC = grid.offsets[ci + 1] - start;
+            const verts = new Array(nC);
+            for (let k = 0; k < nC; k++) verts[k] = conn[start + k];
+            surfaceStrips.push({ verts, srcCell: ci });
+            continue;
+        }
 
         if (is2DCell(type)) {
             const nC = grid.offsets[ci + 1] - start;
@@ -111,6 +120,7 @@ function computeSurface(grid, passCellData) {
     const out = new PolyData();
     out.setPoints(Float32Array.from(grid.points));
     out.setPolys(surfacePolys.map(p => p.verts));
+    out.setStrips(surfaceStrips.map(p => p.verts));
 
     // `cells` reconstructs full source-cell connectivity per surface face —
     // useful for some picking/inspection workflows, but expensive to build
@@ -134,7 +144,7 @@ function computeSurface(grid, passCellData) {
     });
 
     out.userData = out.userData || {};
-    out.userData.surfaceCellMap = surfacePolys.map(p => p.srcCell);
+    out.userData.surfaceCellMap = [...surfacePolys, ...surfaceStrips].map(p => p.srcCell);
 
     for (const a of grid.pointData.arrays.values()) {
         out.pointData.addArray(a.clone(), {

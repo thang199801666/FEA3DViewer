@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import assert from "node:assert/strict";
-import { weldVertices, weldVerticesNaive_DEPRECATED } from "../src/geometry/weld.js";
+import { weldVertices } from "../src/geometry/weld.js";
 
 function attr(coords) {
   return new THREE.BufferAttribute(new Float32Array(coords), 3);
@@ -35,13 +35,7 @@ const TOL = 1e-3;
 const EPS_A = 1.5 * TOL;
 const EPS_B = EPS_A - TOL * 1e-5;
 
-t("[BUG CŨ] weld naive tách nhầm 2 đỉnh ở ranh giới bucket", () => {
-  const p = attr([EPS_A,0,0,  EPS_B,0,0]);
-  const { count } = weldVerticesNaive_DEPRECATED(p, TOL);
-  assert.equal(count, 2, "xác nhận bug của bản cũ vẫn tồn tại");
-});
-
-t("[ĐÃ SỬA] weld mới hàn đúng 2 đỉnh đó", () => {
+t("weld handles two vertices across a bucket boundary", () => {
   const p = attr([EPS_A,0,0,  EPS_B,0,0]);
   const { canon, count } = weldVertices(p, { tolerance: TOL });
   const d = Math.abs(p.getX(0) - p.getX(1));

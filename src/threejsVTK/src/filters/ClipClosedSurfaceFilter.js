@@ -57,7 +57,10 @@ export class ClipClosedSurfaceFilter extends Filter {
 function _merge(body, cap) {
     const out = new PolyData();
     const bN = body.getNumberOfPoints();
-    out.setPoints(Float32Array.from([...body.points, ...cap.points]));
+    const points = new Float32Array(body.points.length + cap.points.length);
+    points.set(body.points, 0);
+    points.set(cap.points, body.points.length);
+    out.setPoints(points);
 
     out.polys = [
         ...body.polys.map(c => [...c]),
