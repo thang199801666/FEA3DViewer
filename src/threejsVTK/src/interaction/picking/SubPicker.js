@@ -242,10 +242,10 @@ export class SubPicker {
 
         for (const actor of actors) {
             const topo = ActorTopology.get(actor);
-            if (!topo || !topo.chains.length) continue;
+            if (!topo || !topo.chains.size) continue;
             actor.updateMatrixWorld(true);
 
-            for (const chain of topo.chains) {
+            for (const chain of topo.chains.values()) {
                 // Broad-phase bounding sphere screening in screen-space
                 sphere.copy(chain.sphere).applyMatrix4(actor.matrixWorld);
                 if (!this._toScreen(sphere.center, c2)) continue;

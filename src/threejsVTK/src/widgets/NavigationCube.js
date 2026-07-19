@@ -168,7 +168,6 @@ export class CameraNavigationActor {
   render() {
     const renderer = this.renderer;
     const { x, y, w, h } = this._rect();
-    const pr = renderer.getPixelRatio();
 
     const previousAutoClear = renderer.autoClear;
     const previousViewport = new THREE.Vector4();
@@ -179,8 +178,8 @@ export class CameraNavigationActor {
 
     renderer.autoClear = false;
     renderer.setScissorTest(true);
-    renderer.setScissor(x * pr, y * pr, w * pr, h * pr);
-    renderer.setViewport(x * pr, y * pr, w * pr, h * pr);
+    renderer.setScissor(x, y, w, h);
+    renderer.setViewport(x, y, w, h);
     renderer.clearDepth();
     renderer.render(this.scene, this.gizmoCam);
 
@@ -205,7 +204,7 @@ export class CameraNavigationActor {
     cam.position.copy(focal).addScaledVector(back, dist);
     cam.up.copy(new THREE.Vector3(0, 1, 0).applyQuaternion(qCur));
     cam.lookAt(focal);
-    vcam.setFromThree();
+    vcam.setFromThree(focal);
     this.onChange?.();
 
     if (cam.quaternion.angleTo(this._snapTarget) < 1e-3) {
@@ -390,7 +389,7 @@ export class CameraNavigationActor {
       cam.position.copy(target).add(offset);
       cam.up.applyQuaternion(q).normalize();
       cam.lookAt(target);
-      vcam.setFromThree();
+      vcam.setFromThree(target);
       this.onChange?.();
 
       this.previousPointerPosition = { x: e.clientX, y: e.clientY };

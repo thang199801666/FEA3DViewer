@@ -36,6 +36,9 @@ export class Actor extends THREE.Group {
         this.externalSurface = true;
         this.keepOuterShell = false;
         this.externalSurfaceWeldTolerance = null;
+        this._workerSession = null;
+        this._workerHandle = null;
+        this._workerPipelineGeneration = 0;
 
         let opts = {};
         let name = "Actor";
@@ -133,6 +136,8 @@ export class Actor extends THREE.Group {
         geometry = this._toExternalSurface(geometry, rawFromMapper);
 
         const polyData = this.getPolyData();
+        const contourSide = opts.contourSide
+            ?? (polyData?.userData?.hasVolumeCells ? THREE.FrontSide : THREE.DoubleSide);
         const isPointPrimitive = !!(
             geometry.userData?.primitiveType === "point" ||
             geometry.userData?.isPoint === true ||
@@ -171,7 +176,10 @@ export class Actor extends THREE.Group {
             vertexColors: !colorTexture && !!geometry.getAttribute("color"),
             map: colorTexture,
             color: 0xffffff,
-            side: opts.side ?? THREE.DoubleSide,
+            // Shells are single surfaces and must show the same contour on
+            // both faces. Extracted volume skins remain front-sided to avoid
+            // far/inner surface bleed-through on translucent solids.
+            side: contourSide,
             transparent: opts.opacity !== undefined && opts.opacity < 1,
             opacity: opts.opacity ?? 1
         });
@@ -205,7 +213,7 @@ export class Actor extends THREE.Group {
         this._hasVertexColors = !!geometry.getAttribute("color");
         this._applyScalarVisibility();
 
-        this._buildBoundaryEdges();
+        if (opts.buildBoundaryEdges !== false) this._buildBoundaryEdges();
 
         if (opts.displayMode) {
             this.setDisplayMode(opts.displayMode);
@@ -787,7 +795,45 @@ export class Actor extends THREE.Group {
         this._applyScalarVisibility();
     }
 
+    attachWorkerDataset(session, handle) {
+        this._workerSession = session;
+        this._workerHandle = handle;
+        this.userData.workerOwnedDataset = true;
+        return this;
+    }
+
+    hasWorkerDataset() {
+        return !!(this._workerSession && this._workerHandle !== null);
+    }
+
+    async updateFromWorker(stages, { onProgress } = {}) {
+        if (!this.hasWorkerDataset()) throw new Error("Actor has no worker-owned dataset");
+        const generation = ++this._workerPipelineGeneration;
+        const temporaryHandle = await this._workerSession.fork(this._workerHandle);
+        try {
+            await this._workerSession.runPipeline(temporaryHandle, stages, { onProgress });
+            const output = await this._workerSession.exportRenderDataSet(temporaryHandle, { release: true });
+            if (generation !== this._workerPipelineGeneration) return null;
+            this.mapper.setInputData(output);
+            this.update();
+            return output;
+        } catch (error) {
+            await this._workerSession.release(temporaryHandle).catch(() => {});
+            throw error;
+        }
+    }
+
+    invalidateWorkerPipeline() {
+        this._workerPipelineGeneration++;
+        return this;
+    }
+
     dispose() {
+        if (this._workerSession) {
+            this._workerSession.dispose();
+            this._workerSession = null;
+            this._workerHandle = null;
+        }
         this._disposeBoundaryEdges();
         this._disposeWireframeOverlay();
 

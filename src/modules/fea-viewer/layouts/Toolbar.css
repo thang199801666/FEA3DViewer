@@ -1,0 +1,490 @@
+/* Toolbar.css */
+.ribbon-toolbar {
+    background-color: #f5f6f7;
+    border-bottom: 1px solid #dcdcdc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+    box-sizing: border-box;
+}
+
+.ribbon-toolbar.collapsed {
+    flex-shrink: 0;
+}
+
+/* Top-level navigation tabs */
+.ribbon-tabs {
+    display: flex;
+    position: relative;
+    background-color: #e3e5e8;
+    padding: 3px 10px 0 10px;
+    gap: 4px;
+    align-items: flex-end;
+}
+
+.ribbon-collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 24px;
+    margin: 0 2px 3px auto;
+    padding: 0;
+    border: 1px solid;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.ribbon-collapse-btn:hover {
+    background-color: rgba(127, 127, 127, 0.18);
+    opacity: 1;
+}
+
+.ribbon-collapse-btn:focus-visible {
+    outline: 2px solid #2684ff;
+    outline-offset: 1px;
+}
+
+.ribbon-tab-btn {
+    padding: 6px 20px;
+    border: 1px solid transparent;
+    background: transparent;
+    font-size: 12px;
+    font-weight: 500;
+    color: #444;
+    cursor: pointer;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.ribbon-tab-btn:hover {
+    background-color: rgba(255, 255, 255, 0.5);
+}
+
+.ribbon-tab-btn.active {
+    background-color: #f5f6f7;
+    border-color: #dcdcdc #dcdcdc transparent #dcdcdc;
+    font-weight: 600;
+    color: #111;
+}
+
+/* Ribbon body containing command groups */
+.ribbon-body {
+    display: flex;
+    padding: 6px 10px;
+    gap: 12px;
+    height: 95px; /* Slightly taller to give buttons more breathing room */
+    align-items: stretch;
+    box-sizing: border-box;
+}
+
+/* CAD-style command group separators */
+.ribbon-group {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #e0e0e0;
+    padding-right: 12px;
+    justify-content: space-between;
+}
+
+.ribbon-group:last-child {
+    border-right: none;
+    padding-right: 0;
+}
+
+/* Button container inside each group */
+.ribbon-group-content {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-grow: 1;
+}
+
+/* Grid layout for orientation commands */
+.ribbon-group-content.grid-views-layout {
+    display: grid;
+    grid-template-columns: repeat(4, auto); /* Four-column grid */
+    grid-gap: 3px;
+    align-items: center;
+}
+
+/* Group title anchored at the bottom */
+.ribbon-group-title {
+    font-size: 10px;
+    color: #888;
+    text-align: center;
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Standard square ribbon button */
+.ribbon-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between; /* Push icon upward and label downward */
+    width: 60px;
+    height: 62px;
+    border: 1px solid transparent;
+    background-color: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    padding: 2px 4px 4px 4px; /* Reduce top padding to reserve more room for the icon */
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.ribbon-btn:hover:not(:disabled) {
+    background-color: #e8eaed;
+    border-color: #dadce0;
+}
+
+.ribbon-btn:active:not(:disabled) {
+    background-color: #dadce0;
+}
+
+.ribbon-btn.active {
+    background-color: #e2ecf7;
+    border-color: #a3c2f0;
+    color: #0b57d0;
+}
+
+/* Text orientation buttons (FRONT, TOP, ISO, etc.) */
+.ribbon-btn-geo {
+    font-size: 10px; /* Slightly smaller so longer labels do not overflow */
+    font-weight: 700;
+    color: #555;
+    background-color: #ffffff;
+    border: 1px solid #dcdcdc;
+    width: 52px;
+    height: 28px; /* Lower height so buttons fit into two grid rows */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    transition: all 0.15s ease;
+}
+
+/* ISO and Fit View span a balanced width in the grid */
+.ribbon-btn-geo.ISO, 
+.grid-views-layout .ribbon-btn {
+    width: 52px;
+    height: 28px;
+    padding: 2px;
+}
+
+.grid-views-layout .ribbon-btn .ribbon-icon {
+    font-size: 14px; /* Smaller icon size for the compact two-row grid */
+}
+
+.ribbon-btn-geo:hover {
+    color: #111;
+    border-color: #adadad;
+    background-color: #f8f9fa;
+}
+
+/* Icon area: maximize available image/SVG space */
+.ribbon-btn .ribbon-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;       /* Fill the available width */
+    flex-grow: 1;      /* Fill the remaining height */
+    font-size: 26px;   /* Override text/emoji icon size */
+}
+
+.ribbon-btn .ribbon-icon img,
+.ribbon-btn .ribbon-icon svg {
+    width: 100%;       /* Force SVG to fill this slot regardless of React size props */
+    height: 100%;      /* Force SVG to fill this slot regardless of React size props */
+    object-fit: contain;
+}
+
+/* Bottom label */
+.ribbon-btn .ribbon-label {
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    text-align: center;
+    margin-top: auto;     /* Keep the label pinned to the bottom */
+}
+
+/* Disabled button state */
+.ribbon-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* --- Style cho Modal Dialog Input --- */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999; /* Keep above the rest of the UI */
+}
+
+.modal-container {
+    background: #ffffff;
+    color: #333333;
+    padding: 20px;
+    border-radius: 6px;
+    width: 300px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+.theme-dark .modal-container {
+    background: #2b2b2b;
+    color: #ffffff;
+    border: 1px solid #444;
+}
+
+.modal-container h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 16px;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 8px;
+}
+.theme-dark .modal-container h3 {
+    border-bottom: 1px solid #444;
+}
+
+.modal-body-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.input-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.input-group label {
+    font-size: 13px;
+}
+
+.input-group input {
+    width: 120px;
+    padding: 4px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #000;
+}
+.theme-dark .input-group input {
+    background: #3b3b3b;
+    border: 1px solid #555;
+    color: #fff;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.modal-btn {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.cancel-btn {
+    background: #e0e0e0;
+    color: #333;
+}
+.cancel-btn:hover { background: #d5d5d5; }
+
+.confirm-btn {
+    background: #007acc;
+    color: #fff;
+}
+.confirm-btn:hover { background: #0062a3; }
+
+/* Full-screen overlay. Pointer behavior is controlled by the app logic. */
+.modal-overlay.backend-modal-clipping {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.2); /* Slightly dim the background */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto; 
+    z-index: 9999;
+}
+
+/* Dialog container */
+.modal-overlay.backend-modal-clipping .modal-container {
+    background: #fff;
+    border-radius: 6px;
+    padding: 16px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    position: relative;
+    /* Remove the default absolute positioning so transforms originate from the center */
+    will-change: transform; 
+}
+
+/* Dark theme overrides */
+.theme-dark .modal-overlay.backend-modal-clipping .modal-container {
+    background: #2d2d2d;
+    color: #fff;
+    border: 1px solid #444;
+}
+
+
+/* Button and tooltip wrapper */
+.ribbon-btn-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+/* Main tooltip frame */
+.ribbon-tooltip-box {
+    position: absolute;
+    top: 100%; /* Show directly below the button */
+    left: 4px;
+    z-index: 9999;
+    display: flex;
+    gap: 12px;
+    width: max-content;
+    max-width: 280px;
+    padding: 8px 12px;
+    margin-top: 5px;
+    background-color: #ffffff;
+    color: #333333;
+    border: 1px solid #b5b5b5;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+    font-family: inherit;
+    pointer-events: none; /* Do not block pointer interactions */
+    animation: fadeIn 0.15s ease-out;
+}
+
+/* Optional global dark theme tooltip override */
+[data-theme="dark"] .ribbon-tooltip-box {
+    background-color: #2d2d30;
+    color: #f1f1f1;
+    border: 1px solid #434346;
+    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Left block containing the enlarged icon */
+.ribbon-tooltip-left {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+    opacity: 0.85;
+}
+
+/* Right block containing text details */
+.ribbon-tooltip-right {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ribbon-tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ribbon-tooltip-title {
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.ribbon-tooltip-hotkey {
+    color: #0066cc;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+[data-theme="dark"] .ribbon-tooltip-hotkey {
+    color: #4fc3f7;
+}
+
+.ribbon-tooltip-instruction {
+    margin: 0;
+    font-size: 11px;
+    color: #666666;
+    line-height: 1.35;
+    white-space: normal;
+}
+
+[data-theme="dark"] .ribbon-tooltip-instruction {
+    color: #aaaaaa;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-3px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.module-ribbon-btn {
+    width: 92px;
+    height: 62px;
+    padding: 4px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 3px;
+    font: inherit;
+    font-size: 10px;
+    line-height: 1.1;
+    cursor: pointer;
+}
+
+.module-ribbon-btn:hover { background: rgba(80, 140, 205, .12); border-color: rgba(80, 140, 205, .35); }
+.module-ribbon-btn.active { background: #dcecff; border-color: #6d9fd5; color: #174f86; }
+.module-ribbon-icon { font-weight: 800; font-size: 17px; letter-spacing: .5px; margin-top: 4px; }
+
+.vtk-import-progress {
+    position: absolute;
+    top: 4px;
+    right: 46px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border: 1px solid #94a3b8;
+    border-radius: 4px;
+    background: #fff;
+    color: #1e293b;
+    font-size: 11px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .14);
+}
+
+.vtk-import-progress progress { width: 130px; }
+.vtk-import-progress button { cursor: pointer; }

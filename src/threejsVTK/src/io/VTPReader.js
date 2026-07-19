@@ -10,6 +10,8 @@
 // - Redundant Float32Array copies are skipped when data is already Float32.
 
 import { PolyData, DataArray } from "../core/PolyData.js";
+import { tryDecodeBase64Wasm, tryParseAsciiWasm } from "../wasm/surfaceExtractorWasm.js";
+import { inflate } from "pako";
 
 const TYPED = {
     Int8: Int8Array, UInt8: Uint8Array,
@@ -110,20 +112,35 @@ function base64BytesToBytes(u8) {
     return out.subarray(0, o);
 }
 
-function bytesToTyped(bytes, type) {
+function bytesToTyped(bytes, type, littleEndian = true) {
     if (type === "Int64" || type === "UInt64") {
         const n = bytes.byteLength >> 3;
         const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const out = new Float64Array(n);
         if (type === "Int64") {
-            for (let i = 0; i < n; i++) out[i] = Number(dv.getBigInt64(i * 8, true));
+            for (let i = 0; i < n; i++) out[i] = Number(dv.getBigInt64(i * 8, littleEndian));
         } else {
-            for (let i = 0; i < n; i++) out[i] = Number(dv.getBigUint64(i * 8, true));
+            for (let i = 0; i < n; i++) out[i] = Number(dv.getBigUint64(i * 8, littleEndian));
         }
         return out;
     }
     const T = TYPED[type];
     if (!T) throw new Error(`VTPReader: Unsupported data type "${type}"`);
+    if (!littleEndian && T.BYTES_PER_ELEMENT > 1) {
+        if (bytes.byteLength % T.BYTES_PER_ELEMENT !== 0) {
+            throw new Error(`VTPReader: ${type} byte block has invalid length ${bytes.byteLength}`);
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const out = new T(bytes.byteLength / T.BYTES_PER_ELEMENT);
+        const readers = new Map([
+            [Int16Array, "getInt16"], [Uint16Array, "getUint16"],
+            [Int32Array, "getInt32"], [Uint32Array, "getUint32"],
+            [Float32Array, "getFloat32"], [Float64Array, "getFloat64"],
+        ]);
+        const reader = readers.get(T);
+        for (let i = 0; i < out.length; ++i) out[i] = dv[reader](i * T.BYTES_PER_ELEMENT, false);
+        return out;
+    }
     // One compact copy: guarantees alignment and releases the big file buffer.
     const copy = bytes.slice();
     return new T(copy.buffer);
@@ -218,7 +235,7 @@ function indexOfBytes(haystack, needleStr, from = 0) {
 
 export class VTPReader {
     constructor(options = {}) {
-        this.pako = options.pako || (typeof globalThis !== "undefined" ? globalThis.pako : null);
+        this.pako = options.pako || (typeof globalThis !== "undefined" ? globalThis.pako : null) || { inflate };
     }
 
     parse(input) {
@@ -252,7 +269,7 @@ export class VTPReader {
                 const raw = bytes.subarray(usIdx + 1, endIdx);
                 // base64: decode straight from bytes (no giant intermediate string)
                 appendedBytes = encoding === "base64"
-                    ? base64BytesToBytes(raw)
+                    ? (tryDecodeBase64Wasm(raw) ?? base64BytesToBytes(raw))
                     : raw.slice();
 
                 xmlText = headText + "</VTKFile>";
@@ -263,7 +280,7 @@ export class VTPReader {
             const m = /<AppendedData[^>]*encoding\s*=\s*"base64"[^>]*>([\s\S]*?)<\/AppendedData>/.exec(xmlText);
             if (m) {
                 // No trim/replace: the decoder skips whitespace and '_' inline.
-                appendedBytes = base64ToBytes(m[1]);
+                appendedBytes = tryDecodeBase64Wasm(m[1]) ?? base64ToBytes(m[1]);
                 xmlText = xmlText.slice(0, m.index) + "</VTKFile>";
             }
         }
@@ -274,9 +291,7 @@ export class VTPReader {
         if (root.getAttribute("type") !== "PolyData") {
             throw new Error(`VTPReader only supports type="PolyData" (found: ${root.getAttribute("type")})`);
         }
-        if ((root.getAttribute("byte_order") || "LittleEndian") !== "LittleEndian") {
-            console.warn("VTPReader: BigEndian byte order detected. Data might be read incorrectly.");
-        }
+        this._littleEndian = (root.getAttribute("byte_order") || "LittleEndian") === "LittleEndian";
 
         this._headerType = root.getAttribute("header_type") || "UInt32";
         this._compressor = root.getAttribute("compressor") || null;
@@ -350,6 +365,8 @@ export class VTPReader {
         if (format === "ascii") {
             // In-place scan: no split(), no filter(), no map(Number)
             const text = el.textContent || "";
+            const accelerated = tryParseAsciiWasm(text, type);
+            if (accelerated) return accelerated;
             const T = TYPED[type] || Float64Array;
             const out = new T(countTokens(text));
             scanNumbers(text, out);
@@ -372,19 +389,29 @@ export class VTPReader {
     get _wordSize() { return this._headerType === "UInt64" ? 8 : 4; }
 
     _readHeaderWord(bytes, offset) {
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset + this._wordSize > bytes.byteLength) {
+            throw new Error(`VTPReader: header offset ${offset} is outside the data block`);
+        }
         const dv = new DataView(bytes.buffer, bytes.byteOffset + offset, this._wordSize);
-        return this._wordSize === 8 ? Number(dv.getBigUint64(0, true)) : dv.getUint32(0, true);
+        const value = this._wordSize === 8
+            ? Number(dv.getBigUint64(0, this._littleEndian !== false))
+            : dv.getUint32(0, this._littleEndian !== false);
+        if (!Number.isSafeInteger(value) || value < 0) throw new Error("VTPReader: unsafe block size in header");
+        return value;
     }
 
     _decodeFromBytes(bytes, offset, type) {
         const ws = this._wordSize;
         if (!this._compressor) {
             const nBytes = this._readHeaderWord(bytes, offset);
-            return bytesToTyped(bytes.subarray(offset + ws, offset + ws + nBytes), type);
+            if (offset + ws + nBytes > bytes.byteLength) throw new Error("VTPReader: data block exceeds appended payload");
+            return bytesToTyped(bytes.subarray(offset + ws, offset + ws + nBytes), type, this._littleEndian !== false);
         }
 
         const numBlocks = this._readHeaderWord(bytes, offset);
+        if (numBlocks > 1000000) throw new Error(`VTPReader: unreasonable compressed block count ${numBlocks}`);
         const headerBytes = (3 + numBlocks) * ws;
+        if (offset + headerBytes > bytes.byteLength) throw new Error("VTPReader: compressed header exceeds appended payload");
         const sizes = [];
         for (let i = 0; i < numBlocks; i++) {
             sizes.push(this._readHeaderWord(bytes, offset + (3 + i) * ws));
@@ -392,18 +419,20 @@ export class VTPReader {
         let pos = offset + headerBytes;
         const chunks = [];
         for (const s of sizes) {
+            if (pos + s > bytes.byteLength) throw new Error("VTPReader: compressed block exceeds appended payload");
             chunks.push(this._inflate(bytes.subarray(pos, pos + s)));
             pos += s;
         }
-        return bytesToTyped(this._concat(chunks), type);
+        return bytesToTyped(this._concat(chunks), type, this._littleEndian !== false);
     }
 
     _decodeInlineBinary(b64, type) {
         const ws = this._wordSize;
         if (!this._compressor) {
-            const bytes = base64ToBytes(b64);
+            const bytes = tryDecodeBase64Wasm(b64) ?? base64ToBytes(b64);
             const nBytes = this._readHeaderWord(bytes, 0);
-            return bytesToTyped(bytes.subarray(ws, ws + nBytes), type);
+            if (ws + nBytes > bytes.byteLength) throw new Error("VTPReader: inline block exceeds decoded payload");
+            return bytesToTyped(bytes.subarray(ws, ws + nBytes), type, this._littleEndian !== false);
         }
 
         // Compressed inline: char offsets into the base64 stream require a
@@ -428,7 +457,7 @@ export class VTPReader {
             chunks.push(this._inflate(data.subarray(pos, pos + s)));
             pos += s;
         }
-        return bytesToTyped(this._concat(chunks), type);
+        return bytesToTyped(this._concat(chunks), type, this._littleEndian !== false);
     }
 
     _inflate(compressed) {

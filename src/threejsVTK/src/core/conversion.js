@@ -89,6 +89,7 @@ export function polyDataFromExtracted(source, geometry) {
     out.setPolys(polys);
 
     out.pointData = source.pointData.clone();
+    out.userData = { ...source.userData };
 
     const srcCellMap = geometry.userData.sourceCellMap;
     const kept = geometry.userData.keptTriangles;

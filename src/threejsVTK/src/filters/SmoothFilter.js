@@ -1,5 +1,6 @@
 import { Filter } from "./Filter.js";
 import { PolyData, DataArray } from "../core/PolyData.js";
+import { trySmoothPointsWasm } from "../wasm/surfaceExtractorWasm.js";
 
 export class SmoothFilter extends Filter {
     constructor() {
@@ -17,6 +18,11 @@ export class SmoothFilter extends Filter {
 
         const nPts = pd.getNumberOfPoints();
         const tris = pd.getTriangles();
+
+        const accelerated = trySmoothPointsWasm(
+            pd.points, tris, this.iterations, this.relaxationFactor,
+        );
+        if (accelerated) return this._buildOutput(pd, accelerated);
 
         const neighbors = Array.from({ length: nPts }, () => new Set());
         for (let t = 0; t < tris.length; t += 3) {
@@ -51,8 +57,12 @@ export class SmoothFilter extends Filter {
             [cur, next] = [next, cur];
         }
 
+        return this._buildOutput(pd, cur);
+    }
+
+    _buildOutput(pd, points) {
         const out = new PolyData();
-        out.setPoints(cur);
+        out.setPoints(points);
         out.verts = pd.verts.map(c => [...c]);
         out.lines = pd.lines.map(c => [...c]);
         out.polys = pd.polys.map(c => [...c]);

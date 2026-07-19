@@ -1,6 +1,7 @@
 import { Filter } from "./Filter.js";
-import { PolyData, DataArray } from "../core/PolyData.js";
+import { PolyData, DataArray, CellArray } from "../core/PolyData.js";
 import earcut from "earcut";
+import { tryCutSegmentsWasm } from "../wasm/surfaceExtractorWasm.js";
 
 export class CutterFilter extends Filter {
     constructor() {
@@ -30,14 +31,29 @@ export class CutterFilter extends Filter {
         const dist = (i) => nx * (pts[i * 3] - ox) + ny * (pts[i * 3 + 1] - oy) + nz * (pts[i * 3 + 2] - oz);
 
         const srcArrays = this.passData ? [...pd.pointData.arrays.values()] : [];
+        const tris = pd.getTriangles();
+        const accelerated = tryCutSegmentsWasm(pts, tris, n, this.origin);
 
         const b = pd.getBounds();
         const diag = Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) || 1;
         const eps = Math.max(diag * 1e-6, 1e-9);
         const eps2 = eps * eps;
 
-        const wPos = [];
-        const wVals = srcArrays.map(() => []);
+        const wPos = accelerated?.points ?? [];
+        const wVals = accelerated
+            ? srcArrays.map((array) => {
+                const components = array.numberOfComponents;
+                const values = new Float32Array(accelerated.sourceA.length * components);
+                for (let i = 0; i < accelerated.sourceA.length; ++i) {
+                    const a = accelerated.sourceA[i], b2 = accelerated.sourceB[i], amount = accelerated.amount[i];
+                    for (let c = 0; c < components; ++c) {
+                        const valueA = array.getComponent(a, c);
+                        values[i * components + c] = valueA + amount * (array.getComponent(b2, c) - valueA);
+                    }
+                }
+                return values;
+            })
+            : srcArrays.map(() => []);
         const buckets = new Map();
         const cellOf = (x) => Math.floor(x / eps);
         const cKey = (a, b2, c) => `${a},${b2},${c}`;
@@ -81,7 +97,15 @@ export class CutterFilter extends Filter {
         };
 
         const segSet = new Set();
-        const segments = [];
+        let segments;
+        if (accelerated) {
+            const count = accelerated.segments.length / 2;
+            const offsets = new Int32Array(count + 1);
+            for (let i = 0; i < count; ++i) offsets[i + 1] = (i + 1) * 2;
+            segments = CellArray.fromOffsetsConnectivity(offsets, accelerated.segments);
+        } else {
+            segments = [];
+        }
         const addSeg = (a, b2) => {
             if (a === b2) return;
             const k = a < b2 ? `${a}_${b2}` : `${b2}_${a}`;
@@ -90,20 +114,21 @@ export class CutterFilter extends Filter {
             segments.push([a, b2]);
         };
 
-        const tris = pd.getTriangles();
-        for (let t = 0; t < tris.length; t += 3) {
-            const idx3 = [tris[t], tris[t + 1], tris[t + 2]];
-            const d = idx3.map(dist);
-            const crossPts = [];
-            for (let e = 0; e < 3; e++) {
-                const a = e, b2 = (e + 1) % 3;
-                const da = d[a], db = d[b2];
-                if ((da < 0 && db >= 0) || (da >= 0 && db < 0)) {
-                    const tt = da / (da - db);
-                    crossPts.push(weld(interpAt(idx3[a], idx3[b2], tt)));
+        if (!accelerated) {
+            for (let t = 0; t < tris.length; t += 3) {
+                const idx3 = [tris[t], tris[t + 1], tris[t + 2]];
+                const d = idx3.map(dist);
+                const crossPts = [];
+                for (let e = 0; e < 3; e++) {
+                    const a = e, b2 = (e + 1) % 3;
+                    const da = d[a], db = d[b2];
+                    if ((da < 0 && db >= 0) || (da >= 0 && db < 0)) {
+                        const tt = da / (da - db);
+                        crossPts.push(weld(interpAt(idx3[a], idx3[b2], tt)));
+                    }
                 }
+                if (crossPts.length === 2) addSeg(crossPts[0], crossPts[1]);
             }
-            if (crossPts.length === 2) addSeg(crossPts[0], crossPts[1]);
         }
 
         const out = new PolyData();
@@ -207,6 +232,58 @@ function _assembleLoops(segments, to2D) {
         if (!adj.get(a).includes(b)) adj.get(a).push(b);
     };
     for (const [a, b] of segments) { add(a, b); add(b, a); }
+
+    // A plain shell has degree two at every vertex and is handled by the
+    // original contour walker below (including nested hole loops). Cutting
+    // element faces creates a planar graph with degree 3/4 junctions. Such a
+    // graph must be walked as directed half-edges; consuming an undirected
+    // edge on its first visit merges adjacent element sections into long,
+    // badly triangulated polygons.
+    if ([...adj.values()].some(nbrs => nbrs.length > 2)) {
+        const directedUsed = new Set();
+        const dk = (a, b) => `${a}>${b}`;
+        const loops = [];
+        const maxSteps = segments.length * 2 + 8;
+
+        // Sort neighbours counter-clockwise once. For u -> v, choosing the
+        // neighbour immediately clockwise from u keeps the bounded face on
+        // the left of the directed edge.
+        const sorted = new Map();
+        for (const [v, nbrs] of adj) {
+            const p = to2D(v);
+            sorted.set(v, [...nbrs].sort((a, b) => {
+                const pa = to2D(a), pb = to2D(b);
+                return Math.atan2(pa[1] - p[1], pa[0] - p[0])
+                    - Math.atan2(pb[1] - p[1], pb[0] - p[0]);
+            }));
+        }
+
+        for (const [startA, startB] of segments) {
+            for (const [a0, b0] of [[startA, startB], [startB, startA]]) {
+                if (directedUsed.has(dk(a0, b0))) continue;
+                const loop = [];
+                let a = a0, b = b0, closed = false;
+                for (let guard = 0; guard < maxSteps; guard++) {
+                    const key = dk(a, b);
+                    if (directedUsed.has(key)) break;
+                    directedUsed.add(key);
+                    loop.push(a);
+
+                    const nbrs = sorted.get(b) ?? [];
+                    const incoming = nbrs.indexOf(a);
+                    if (incoming < 0 || nbrs.length < 2) break;
+                    const c = nbrs[(incoming - 1 + nbrs.length) % nbrs.length];
+                    a = b; b = c;
+                    if (a === a0 && b === b0) { closed = true; break; }
+                }
+                if (!closed || loop.length < 3) continue;
+                const area = _signedArea(loop.map(to2D));
+                // The opposite traversal is the unbounded exterior face.
+                if (area > 1e-12) loops.push(loop);
+            }
+        }
+        return loops;
+    }
 
     const used = new Set();
     const ek = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);

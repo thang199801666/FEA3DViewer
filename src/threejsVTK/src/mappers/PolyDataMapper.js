@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { recordPerformance } from "../performance/telemetry.js";
 import { LookupTable } from "../color/LookupTable.js";
 
 /**
@@ -93,6 +94,7 @@ export class PolyDataMapper {
      */
     buildGeometry() {
         if (!this.input) throw new Error("PolyDataMapper: input data is not set. Call setInputData first.");
+        const started = performance.now();
         const pd = this.input;
 
         const geometry = new THREE.BufferGeometry();
@@ -153,6 +155,14 @@ export class PolyDataMapper {
         if (tris.length > 0) geometry.computeVertexNormals();
         geometry.computeBoundingBox();
         geometry.computeBoundingSphere();
+        recordPerformance({
+            operation: "geometry-build",
+            backend: "main-thread",
+            durationMs: performance.now() - started,
+            pointCount: pd.getNumberOfPoints(),
+            cellCount: pd.getNumberOfCells(),
+            primitiveType: geometry.userData.primitiveType,
+        });
         return geometry;
     }
 

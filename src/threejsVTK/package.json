@@ -11,6 +11,9 @@
     "src"
   ],
   "scripts": {
+    "build:wasm": "powershell -ExecutionPolicy Bypass -File native/build-wasm.ps1",
+    "benchmark:surface": "node tools/benchmark-surface.mjs",
+    "benchmark:file": "node --expose-gc tools/benchmark-file-memory.mjs",
     "test": "node tests/run.mjs",
     "verify": "node tools/verify-imports.mjs src",
     "depcruise": "depcruise --config .dependency-cruiser.cjs src",

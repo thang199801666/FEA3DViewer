@@ -1,4 +1,5 @@
 import { Filter } from "./Filter.js";
+import { tryWarpPointsWasm } from "../wasm/surfaceExtractorWasm.js";
 
 export class WarpFilter extends Filter {
     constructor() {
@@ -30,6 +31,13 @@ export class WarpFilter extends Filter {
         const dst = out.points;
         const s = this.scaleFactor;
         const n = input.getNumberOfPoints();
+
+        const accelerated = tryWarpPointsWasm(src, vec.values, vec.numberOfComponents, s);
+        if (accelerated) {
+            out.setPoints(accelerated);
+            out.modified();
+            return out;
+        }
 
         for (let i = 0; i < n; i++) {
             dst[i * 3]     = src[i * 3]     + s * vec.getComponent(i, 0);

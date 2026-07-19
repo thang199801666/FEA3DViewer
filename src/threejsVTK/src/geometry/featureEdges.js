@@ -1,5 +1,6 @@
 // Actors/FeatureEdges.js
 import * as THREE from "three";
+import { tryWeldPointsWasm } from "../wasm/surfaceExtractorWasm.js";
 
 /**
  * FeatureEdges - Extracts feature edges from a BufferGeometry, mimicking vtkFeatureEdges.
@@ -295,6 +296,29 @@ export class FeatureEdges {
         const pos = src.getAttribute("position");
         const srcIndex = src.getIndex();
         const count = srcIndex ? srcIndex.count : pos.count;
+
+        if (pos.itemSize === 3 && pos.array && !pos.isInterleavedBufferAttribute && !pos.normalized) {
+            const accelerated = tryWeldPointsWasm(pos.array, tol > 0 ? tol : 1e-4);
+            if (accelerated) {
+                const positions = new Float32Array(accelerated.count * 3);
+                const seen = new Uint8Array(accelerated.count);
+                for (let raw = 0; raw < accelerated.canon.length; ++raw) {
+                    const canonical = accelerated.canon[raw];
+                    if (seen[canonical]) continue;
+                    seen[canonical] = 1;
+                    positions[canonical * 3] = pos.array[raw * 3];
+                    positions[canonical * 3 + 1] = pos.array[raw * 3 + 1];
+                    positions[canonical * 3 + 2] = pos.array[raw * 3 + 2];
+                }
+                const triangles = new Uint32Array(count);
+                if (srcIndex) {
+                    for (let i = 0; i < count; ++i) triangles[i] = accelerated.canon[srcIndex.getX(i)];
+                } else {
+                    for (let i = 0; i < count; ++i) triangles[i] = accelerated.canon[i];
+                }
+                return { positions, triangles };
+            }
+        }
 
         const cellSize = tol > 0 ? tol : 1e-4;
         const tolSq = cellSize * cellSize;

@@ -1,5 +1,6 @@
 import { Filter } from "./Filter.js";
 import { PolyData } from "../core/PolyData.js";
+import { tryContourLinesWasm } from "../wasm/surfaceExtractorWasm.js";
 
 export class ContourFilter extends Filter {
     constructor() {
@@ -34,6 +35,19 @@ export class ContourFilter extends Filter {
             return new PolyData();
         }
         const scalars = scalarArr.values;
+
+        const accelerated = tryContourLinesWasm(points, tris, scalars, this.isoValues);
+        if (accelerated) {
+            const out = new PolyData();
+            out.setPoints(accelerated.points);
+            const lineIndices = new Int32Array(accelerated.points.length / 3);
+            for (let i = 0; i < lineIndices.length; ++i) lineIndices[i] = i;
+            out.setLines(lineIndices);
+            if (accelerated.scalars.length) {
+                out.addPointDataArray("Contour", accelerated.scalars, 1, { setActiveScalar: true });
+            }
+            return out;
+        }
 
         const outPoints = [];
         const outLines = [];

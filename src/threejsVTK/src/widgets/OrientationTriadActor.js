@@ -119,8 +119,9 @@ export class OrientationTriadActor {
   render() {
     const renderer = this.renderer;
     const canvas = renderer.domElement;
-    const fullWidth = canvas.width;
-    const fullHeight = canvas.height;
+    // Use CSS pixels; WebGLRenderer maps these to the DPR-scaled buffer.
+    const fullWidth = canvas.clientWidth;
+    const fullHeight = canvas.clientHeight;
     const { x, y, w, h } = this._rect(fullWidth, fullHeight);
 
     const previousAutoClear = renderer.autoClear;
@@ -131,10 +132,10 @@ export class OrientationTriadActor {
     const previousScissorTest = renderer.getScissorTest();
 
     renderer.autoClear = false;
-    renderer.clearDepth();
     renderer.setScissorTest(true);
     renderer.setViewport(x, y, w, h);
     renderer.setScissor(x, y, w, h);
+    renderer.clearDepth();
     renderer.render(this.scene, this.camera);
 
     renderer.setViewport(previousViewport);

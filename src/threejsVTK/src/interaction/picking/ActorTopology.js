@@ -22,6 +22,7 @@
 //     detection when flat-shaded or imported meshes duplicate vertices.
 // ---------------------------------------------------------------------------
 import * as THREE from "three";
+import { tryWeldPointsWasm } from "../../wasm/surfaceExtractorWasm.js";
 
 const _va = new THREE.Vector3();
 const _vb = new THREE.Vector3();
@@ -95,6 +96,17 @@ function inferredOrder(type, count, shape) {
 function buildWeldMap(posAttr, tolerance) {
     const n = posAttr.count;
     const cell = Math.max(tolerance, 1e-12);
+    if (posAttr.itemSize === 3 && posAttr.array && !posAttr.isInterleavedBufferAttribute && !posAttr.normalized) {
+        const accelerated = tryWeldPointsWasm(posAttr.array, cell);
+        if (accelerated) {
+            const weldedFirstRaw = new Int32Array(accelerated.count).fill(-1);
+            for (let raw = 0; raw < accelerated.canon.length; ++raw) {
+                const welded = accelerated.canon[raw];
+                if (weldedFirstRaw[welded] < 0) weldedFirstRaw[welded] = raw;
+            }
+            return { rawToWelded: accelerated.canon, weldedFirstRaw };
+        }
+    }
     const buckets = new Map(); // "ix_iy_iz" -> [weldedId, ...] candidates in the same cell
     const rawToWelded = new Int32Array(n);
     const weldedFirstRaw = []; // weldedId -> representative raw index used for position lookup
@@ -140,7 +152,7 @@ function buildWeldMap(posAttr, tolerance) {
 }
 
 export class ActorTopology {
-    constructor(actor, { weldTolerance, surfaceFeatureAngle = actor?.featureEdgeAngle ?? 20 } = {}) {
+    constructor(actor, { weldTolerance, surfaceFeatureAngle = actor?.selectionFeatureAngle ?? actor?.featureEdgeAngle ?? 20 } = {}) {
         this.actor = actor;
 
         const mesh = actor.surface;
@@ -260,30 +272,22 @@ export class ActorTopology {
         }
         // Without pointMap, nodeId is the raw vertex index and no map is needed.
 
-        // ---- boundary edge chains used by PickMode.EDGE ----
-        // A boundary edge belongs to exactly one triangle in welded-vertex space.
-        // Each boundary edge is stored as an independent two-vertex chain. This is
-        // sufficient for highlighting; continuous polylines can be added later with
-        // a graph-walk merge step.
-        const edgeTriCount = new Map();
-        for (let t = 0; t < this.triCount; t++) {
-            const o = t * 3;
-            const a = tri[o], b = tri[o + 1], c = tri[o + 2];
-            for (const [u, v] of [[a, b], [b, c], [c, a]]) {
-                const k = edgeKey(u, v);
-                edgeTriCount.set(k, (edgeTriCount.get(k) || 0) + 1);
-            }
-        }
-        /** @type {Map<string, {verts:number[], positions:Float32Array}>} */
+        // ---- geometric feature-edge chains used by PickMode.EDGE ----
+        // Reuse the same boundary/feature edges shown by the actor. Restricting
+        // this to one-triangle boundary edges leaves closed solids with no
+        // selectable lines at all.
+        /** @type {Map<string, {id:string, verts:number[], positions:Float32Array, sphere:THREE.Sphere}>} */
         this.chains = new Map();
-        for (const [k, count] of edgeTriCount) {
-            if (count !== 1) continue;
-            const [u, v] = k.split("_").map(Number);
-            const positions = new Float32Array([
-                wpos[u * 3], wpos[u * 3 + 1], wpos[u * 3 + 2],
-                wpos[v * 3], wpos[v * 3 + 1], wpos[v * 3 + 2],
-            ]);
-            this.chains.set(k, { verts: [u, v], positions });
+        for (let offset = 0; offset + 5 < this.partOutlinePositions.length; offset += 6) {
+            const id = String(offset / 6);
+            const positions = this.partOutlinePositions.slice(offset, offset + 6);
+            const start = new THREE.Vector3().fromArray(positions, 0);
+            const end = new THREE.Vector3().fromArray(positions, 3);
+            const sphere = new THREE.Sphere(
+                start.clone().add(end).multiplyScalar(0.5),
+                start.distanceTo(end) * 0.5
+            );
+            this.chains.set(id, { id, verts: [0, 1], positions, sphere });
         }
     }
 

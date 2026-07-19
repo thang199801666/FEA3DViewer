@@ -14,6 +14,7 @@
 // Typical speedup on multi-MB ASCII files: 5-10x, with flat memory usage.
 
 import { PolyData, DataArray, CellArray } from "../core/PolyData.js";
+import { tryParseAsciiWasm } from "../wasm/surfaceExtractorWasm.js";
 
 const CELL_INFO = {
     0:  { family: "skip" },                        // EMPTY_CELL
@@ -86,6 +87,9 @@ const SUPPORTED_DATASETS = new Set([
 ]);
 const STRUCTURED_DATASETS = new Set([
     "STRUCTURED_GRID", "STRUCTURED_POINTS", "RECTILINEAR_GRID"
+]);
+const VOLUME_CELL_FAMILIES = new Set([
+    "tetra", "voxel", "hexahedron", "wedge", "pyramid", "pentaprism", "hexaprism", "polyhedron",
 ]);
 
 /**
@@ -213,15 +217,35 @@ class TextCursor {
     }
 
     readFloats(n) {
+        const accelerated = this._readNative(n, "Float32");
+        if (accelerated) return accelerated;
         const a = new Float32Array(n);
         for (let i = 0; i < n; i++) a[i] = this.nextFloat();
         return a;
     }
 
     readInts(n) {
+        const accelerated = this._readNative(n, "Int32");
+        if (accelerated) return accelerated;
         const a = new Int32Array(n);
         for (let i = 0; i < n; i++) a[i] = this.nextInt();
         return a;
+    }
+
+    _readNative(n, type) {
+        if (n < 1024 || !this._skipWs()) return null;
+        const start = this.pos;
+        const text = this.text;
+        let end = start;
+        for (let token = 0; token < n; ++token) {
+            while (end < this.end && text.charCodeAt(end) <= 32) ++end;
+            if (end >= this.end) return null;
+            while (end < this.end && text.charCodeAt(end) > 32) ++end;
+        }
+        const parsed = tryParseAsciiWasm(text.slice(start, end), type);
+        if (!parsed || parsed.length !== n) return null;
+        this.pos = end;
+        return parsed;
     }
 }
 
@@ -687,6 +711,11 @@ export class VTKLegacyReader {
         pd.userData = pd.userData || {};
         pd.userData.sourceCells = cells.clone();
         pd.userData.sourceCellTypes = Int32Array.from(types);
+        pd.userData.hasVolumeCells = types.some((type) => VOLUME_CELL_FAMILIES.has(CELL_INFO[type]?.family));
+        pd.userData.hasSurfaceCells = types.some((type) => {
+            const family = CELL_INFO[type]?.family;
+            return family === "triangle" || family === "quad" || family === "polygon" || family === "pixel" || family === "strip";
+        });
         // Accumulated locally and committed to pd once at the end via the
         // CellArray-backed setVerts/setLines/setPolys/setStrips — pd.polys
         // etc. are now typed-array-backed CellArrays and no longer support

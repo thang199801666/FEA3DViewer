@@ -10,6 +10,15 @@ export const INTERACTION_ACTION = {
     ROTATE: "ROTATE",
     PAN: "PAN",
     ZOOM_WINDOW: "ZOOM_WINDOW",
+    DOLLY: "DOLLY",
+};
+
+export const INTERACTION_MODE = {
+    SELECT: "select",
+    PAN: "pan",
+    ROTATE: "rotate",
+    ZOOM: "zoom",
+    DOLLY: "dolly",
 };
 
 /** Internal state of the interactor style */
@@ -21,6 +30,7 @@ export const NAV_STATE = {
     TOUCH_ROTATE: 4,
     TOUCH_PAN_ZOOM: 5,
     RUBBER_BAND: 6,
+    DOLLY: 7,
 };
 
 /** * Selection mode for rubber band based on horizontal drag direction:

@@ -1,5 +1,6 @@
 import { Filter } from "./Filter.js";
-import { PolyData, DataArray } from "../core/PolyData.js";
+import { PolyData, DataArray, CellArray } from "../core/PolyData.js";
+import { tryClipTrianglesWasm } from "../wasm/surfaceExtractorWasm.js";
 
 export class ClipFilter extends Filter {
     constructor() {
@@ -25,6 +26,35 @@ export class ClipFilter extends Filter {
         const [ox, oy, oz] = this.origin;
         const sign = this.insideOut ? -1 : 1;
         const pts = pd.points;
+        const tris = pd.getTriangles();
+
+        const accelerated = tryClipTrianglesWasm(pts, tris, this.normal, this.origin, this.insideOut);
+        if (accelerated) {
+            const out = new PolyData();
+            out.setPoints(accelerated.points);
+            out.setPolys(CellArray.fromOffsetsConnectivity(
+                accelerated.polyOffsets, accelerated.polyConnectivity,
+            ));
+            for (const source of pd.pointData.arrays.values()) {
+                const components = source.numberOfComponents;
+                const values = new Float32Array(accelerated.sourceA.length * components);
+                for (let i = 0; i < accelerated.sourceA.length; ++i) {
+                    const a = accelerated.sourceA[i], b = accelerated.sourceB[i];
+                    const amount = accelerated.amount[i];
+                    for (let c = 0; c < components; ++c) {
+                        const valueA = source.getComponent(a, c);
+                        values[i * components + c] = b < 0
+                            ? valueA
+                            : valueA + amount * (source.getComponent(b, c) - valueA);
+                    }
+                }
+                out.pointData.addArray(new DataArray(source.name, values, components), {
+                    asScalars: pd.pointData.activeScalars === source.name,
+                    asVectors: pd.pointData.activeVectors === source.name,
+                });
+            }
+            return out;
+        }
 
         const dist = (i) => sign * (
             nx * (pts[i * 3] - ox) +
@@ -61,7 +91,6 @@ export class ClipFilter extends Filter {
             return idx;
         };
 
-        const tris = pd.getTriangles();
         for (let t = 0; t < tris.length; t += 3) {
             const idx3 = [tris[t], tris[t + 1], tris[t + 2]];
             const d = idx3.map(dist);

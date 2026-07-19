@@ -3,6 +3,8 @@
 import { VTKLegacyReader } from "./VTKLegacyReader.js";
 import { VTPReader } from "./VTPReader.js";
 import { Algorithm } from "../core/Algorithm.js";
+import { canUseVTKWorker, parseVTKInWorker } from "./vtkWorkerClient.js";
+import { recordPerformance } from "../performance/telemetry.js";
 
 /**
  * VTKReader is now an Algorithm (mirrors native VTK's vtkReader family:
@@ -105,13 +107,38 @@ export class VTKReader extends Algorithm {
         // payloads in <AppendedData encoding="raw"> (invalid UTF-8 sequences
         // are replaced). Reading the ArrayBuffer once fixes both: VTPReader
         // accepts ArrayBuffer natively and only decodes the XML head to text.
-        const buf = await file.arrayBuffer();
-        const headLen = Math.min(512, buf.byteLength);
-        const head = new TextDecoder().decode(new Uint8Array(buf, 0, headLen));
+        const headSlice = file.slice(0, 512);
+        const headBuffer = typeof headSlice?.arrayBuffer === "function"
+            ? await headSlice.arrayBuffer()
+            : await file.arrayBuffer();
+        const head = new TextDecoder().decode(new Uint8Array(headBuffer));
         const fmt = this.detectFormat(head, name);
 
+        if (this.options.worker !== false && canUseVTKWorker()) {
+            // Structured-clone the File handle; its full payload is read inside the worker.
+            // This avoids retaining a second full-file ArrayBuffer on the UI thread.
+            return parseVTKInWorker(file, {
+                format: fmt,
+                fileName: name,
+                onProgress: this.options.onProgress,
+                signal: this.options.signal,
+            });
+        }
+
+        const buf = await file.arrayBuffer();
+        const started = performance.now();
         this.setInputSource(buf, name);
         this._detectedFormat = fmt;
-        return this.getOutputData();
+        const output = this.getOutputData();
+        recordPerformance({
+            operation: "vtk-import",
+            backend: "main-thread",
+            fileName: name,
+            parseMs: performance.now() - started,
+            inputBytes: buf.byteLength,
+            pointCount: output.getNumberOfPoints(),
+            cellCount: output.getNumberOfCells(),
+        });
+        return output;
     }
 }

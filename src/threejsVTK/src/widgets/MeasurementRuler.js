@@ -140,7 +140,6 @@ export class MeasurementRulerActor {
   render() {
     if (!this.group.visible) return;
     const renderer = this.renderer;
-    const pr = renderer.getPixelRatio();
     const w = renderer.domElement.clientWidth;
     const h = renderer.domElement.clientHeight;
 
@@ -153,8 +152,10 @@ export class MeasurementRulerActor {
 
     renderer.autoClear = false;
     renderer.setScissorTest(true);
-    renderer.setScissor(0, 0, w * pr, h * pr);
-    renderer.setViewport(0, 0, w * pr, h * pr);
+    // WebGLRenderer applies devicePixelRatio internally. Overlay coordinates
+    // stay in logical CSS pixels, matching update() and the host viewport.
+    renderer.setScissor(0, 0, w, h);
+    renderer.setViewport(0, 0, w, h);
     
     renderer.clearDepth();
     renderer.render(this.scene, this.camera);

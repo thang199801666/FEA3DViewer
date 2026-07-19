@@ -17,6 +17,14 @@ export function weldVertices(pos, { tolerance = null, boundingBox = null } = {})
     }
 
     const tolSq = tol * tol;
+
+    // Standard non-interleaved BufferAttributes can be transferred as one
+    // contiguous block. Exotic/interleaved attributes retain the JS path.
+    if (pos.itemSize === 3 && pos.array && !pos.isInterleavedBufferAttribute && !pos.normalized) {
+        const accelerated = tryWeldPointsWasm(pos.array, tol);
+        if (accelerated) return accelerated;
+    }
+
     const cellSize = tol;
     const buckets = new Map(); // "cx,cy,cz" -> [representative vertex indices]
     const canon = new Int32Array(pos.count).fill(-1);
@@ -61,3 +69,4 @@ export function weldVertices(pos, { tolerance = null, boundingBox = null } = {})
 
     return { canon, count, tolerance: tol };
 }
+import { tryWeldPointsWasm } from "../wasm/surfaceExtractorWasm.js";

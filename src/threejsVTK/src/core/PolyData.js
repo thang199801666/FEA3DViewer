@@ -136,7 +136,9 @@ export class PolyData extends DataSet {
         out.strips = this._strips.clone();
         out.pointData = this.pointData.clone();
         out.cellData = this.cellData.clone();
-        out.userData = { ...this.userData };
+        out.userData = Object.fromEntries(Object.entries(this.userData).map(([key, value]) => [
+            key, ArrayBuffer.isView(value) ? value.slice() : value,
+        ]));
         out.cells = this.cells.map(c => ({
             type: c.type,
             points: [...c.points]

@@ -14,9 +14,17 @@ export {
 
 // ── sources ─────────────────────────────────────────────────────────────────
 export { BoxSource } from "./sources/BoxSource.js";
+export { HexBoltSource } from "./sources/HexBoltSource.js";
+export { PerforatedPlateSource } from "./sources/PerforatedPlateSource.js";
+export { ExtrudedProfileSource } from "./sources/ExtrudedProfileSource.js";
 
 // ── io ──────────────────────────────────────────────────────────────────────
 export { VTKReader } from "./io/VTKReader.js";
+export { FEAReader } from "./io/FEAReader.js";
+export { FEAWriter } from "./io/FEAWriter.js";
+export { VTKWorkerSession } from "./io/VTKWorkerSession.js";
+export { getPerformanceEntries, clearPerformanceEntries } from "./performance/telemetry.js";
+export { getMemoryBudget, assessVTKFileMemory } from "./performance/memoryBudget.js";
 export { VTKLegacyReader } from "./io/VTKLegacyReader.js";
 export { VTPReader } from "./io/VTPReader.js";
 export { DataArrayCodec } from "./io/dataArrayCodec.js";
@@ -32,6 +40,7 @@ export { computeSceneBounds, SectionPlaneHelperActor } from "./utils/scenePrimit
 export { Filter } from "./filters/Filter.js";
 export { SurfaceFilter, SURFACE_STRATEGY } from "./filters/SurfaceFilter.js";
 export { DataSetSurfaceFilter } from "./filters/DataSetSurfaceFilter.js";
+export { initializeSurfaceWasm, getSurfaceWasmStatus, getWasmCapabilities } from "./wasm/surfaceExtractorWasm.js";
 export { ContourFilter } from "./filters/ContourFilter.js";
 export { ClipFilter } from "./filters/ClipFilter.js";
 export { ClipClosedSurfaceFilter } from "./filters/ClipClosedSurfaceFilter.js";
@@ -49,9 +58,12 @@ export { DataSetMapper } from "./mappers/DataSetMapper.js";
 
 // ── actors ──────────────────────────────────────────────────────────────────
 export { Actor } from "./actors/Actor.js";
+export { LargeModelActor } from "./actors/LargeModelActor.js";
 export { LineActor } from "./actors/LineActor.js";
 export { SectionActor } from "./actors/SectionActor.js";
 export { VectorGlyphActor } from "./actors/VectorGlyphActor.js";
+export { LoadArrowActor } from "./actors/LoadArrowActor.js";
+export { MomentArrowActor } from "./actors/MomentArrowActor.js";
 export { GridActor } from "./actors/GridActor.js";
 
 // ── lights ─────────────────────────────────────────────────────────────────
@@ -69,6 +81,8 @@ export { MeasurementTool, MEASUREMENT_MODE } from "./widgets/MeasurementTool.js"
 // ── rendering ───────────────────────────────────────────────────────────────
 export { RenderWindow } from "./rendering/RenderWindow.js";
 export { Renderer } from "./rendering/Renderer.js";
+export { RenderingBackend } from "./rendering/RenderingBackend.js";
+export { partitionGeometry, buildLODGeometries, createLargeModelLOD } from "./rendering/LargeModelLOD.js";
 export { makeContourMaterial } from "./rendering/materials/ContourShaderMaterial.js";
 export { makeHatchMaterial } from "./rendering/materials/HatchMaterial.js";
 
@@ -81,7 +95,7 @@ export { CameraAnimation } from "./camera/CameraAnimation.js";
 export { CameraClipping } from "./camera/CameraClipping.js";
 
 // ── interaction ─────────────────────────────────────────────────────────────
-export { NAV_STYLE, INTERACTION_ACTION, NAV_STATE, RUBBER_BAND_MODE } from "./interaction/constants.js";
+export { NAV_STYLE, INTERACTION_ACTION, INTERACTION_MODE, NAV_STATE, RUBBER_BAND_MODE } from "./interaction/constants.js";
 export { RenderWindowInteractor } from "./interaction/RenderWindowInteractor.js";
 export { InteractorStyle } from "./interaction/InteractorStyle.js";
 export { InteractorStyleOrbit } from "./interaction/InteractorStyleOrbit.js";

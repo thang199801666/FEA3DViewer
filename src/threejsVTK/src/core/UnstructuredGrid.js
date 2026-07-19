@@ -7,6 +7,7 @@ import { Algorithm } from "./Algorithm.js";
 import {
     CellType, CELL_FACES, CELL_NUM_CORNERS, isSolidCell, is2DCell,
 } from "./CellTypes.js";
+import { tryExtractSurfaceWasm } from "../wasm/surfaceExtractorWasm.js";
 
 /**
  * vtkDataSetSurfaceFilter equivalent: extracts external boundary faces of
@@ -37,7 +38,12 @@ export class ExtractSurfaceFilter extends Algorithm {
 
     requestData(input) {
         if (!input) throw new Error("ExtractSurfaceFilter: no input set (call setInputData() first)");
-        return computeSurface(input, this._passCellData);
+        const output = tryExtractSurfaceWasm(input, this._passCellData)
+            ?? computeSurface(input, this._passCellData);
+        output.userData = output.userData || {};
+        output.userData.hasVolumeCells = Array.from(input.cellTypes).some(isSolidCell);
+        output.userData.hasSurfaceCells = Array.from(input.cellTypes).some(is2DCell);
+        return output;
     }
 }
 

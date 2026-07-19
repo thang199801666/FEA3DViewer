@@ -2,6 +2,7 @@ import * as THREE from "three";
 import assert from "node:assert/strict";
 import { Camera } from "../src/camera/Camera.js";
 import { InteractorStyleOrbit } from "../src/interaction/InteractorStyleOrbit.js";
+import { INTERACTION_ACTION, INTERACTION_MODE } from "../src/interaction/constants.js";
 
 // Tích hợp: KHÔNG mock facade. Cho InteractorStyleOrbit THẬT điều khiển Camera THẬT.
 // Đây là kiểm chứng mạnh nhất rằng bề mặt facade dựng lại đúng.
@@ -114,6 +115,40 @@ t("chuỗi rotate/pan/wheel 100 lần: state hợp lệ, zoom dương", () => {
 t("style.dispose() rồi cam.dispose() không ném", () => {
   const { cam, style } = mk();
   assert.doesNotThrow(() => { style.dispose(); cam.dispose(); });
+});
+
+t("forced interaction modes map left mouse and update the cursor", () => {
+  const { cam, style, three } = mk();
+  style.setInteractionMode(INTERACTION_MODE.PAN);
+  assert.equal(style._determineAction({ buttons: 1 }), INTERACTION_ACTION.PAN);
+  assert.equal(domElement.style.cursor, "grab");
+  style.setInteractionMode(INTERACTION_MODE.ROTATE);
+  assert.equal(style._determineAction({ buttons: 1 }), INTERACTION_ACTION.ROTATE);
+  assert.equal(domElement.style.cursor, "move");
+
+  const positionBeforeSelect = three.position.clone();
+  const quaternionBeforeSelect = three.quaternion.clone();
+  const targetBeforeSelect = cam.state.target.clone();
+  const zoomBeforeSelect = three.zoom;
+  style.setInteractionMode(INTERACTION_MODE.SELECT);
+  assert.equal(style._determineAction({ buttons: 1 }), INTERACTION_ACTION.NONE);
+  assert.equal(domElement.style.cursor, "default");
+  assert.ok(three.position.equals(positionBeforeSelect));
+  assert.ok(three.quaternion.equals(quaternionBeforeSelect));
+  assert.ok(cam.state.target.equals(targetBeforeSelect));
+  assert.equal(three.zoom, zoomBeforeSelect);
+});
+
+t("Dolly drag up zooms in and drag down zooms out around scene center", () => {
+  const { style, three } = mk();
+  style.setInteractionMode(INTERACTION_MODE.DOLLY);
+  const initial = three.zoom;
+  style.onLeftButtonDown({ pointerId: 1, pointerType: "mouse", buttons: 1, clientX: 400, clientY: 300 });
+  style.onMouseMove({ pointerId: 1, pointerType: "mouse", buttons: 1, clientX: 400, clientY: 260 });
+  assert.ok(three.zoom > initial, "upward drag must zoom in");
+  const zoomedIn = three.zoom;
+  style.onMouseMove({ pointerId: 1, pointerType: "mouse", buttons: 1, clientX: 400, clientY: 340 });
+  assert.ok(three.zoom < zoomedIn, "downward drag must zoom out");
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -24,9 +24,9 @@ import {
 // ── app controllers (không thuộc thư viện) ──────────────────────────────────
 // LƯU Ý: thư viện cũng có interaction/picking/PickingController.js — TRÙNG TÊN với
 // file này nhưng là hai lớp khác nhau. Import tường minh để không ai nhầm.
-import SceneController from "../controllers/SceneController";
-import { PickingController as AppPickingController } from "../controllers/PickingController";
-import TextBlockController from "../controllers/TextBlockController";
+import SceneController from "../shared/controllers/SceneController";
+import { PickingController as AppPickingController } from "../shared/controllers/PickingController";
+import TextBlockController from "../shared/controllers/TextBlockController";
 
 // VTKCamera đã bị xoá; API của nó được hấp thụ vào Camera facade. Gọi một lần.
 applyVTKCameraApi(Camera);

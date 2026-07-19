@@ -10,11 +10,13 @@ export class ClipClosedSurfaceFilter extends Filter {
         this.origin = [0, 0, 0];
         this.insideOut = false;
         this.capping = true;
+        this.capInput = null;
     }
 
     setPlane(normal, origin) { this.normal = [...normal]; this.origin = [...origin]; return this; }
     setInsideOut(v) { this.insideOut = !!v; return this; }
     setCapping(v) { this.capping = !!v; return this; }
+    setCapInputData(input) { this.capInput = input; return this; }
 
     _capNormal() {
         return this.insideOut ? [...this.normal] : this.normal.map(x => -x);
@@ -33,7 +35,7 @@ export class ClipClosedSurfaceFilter extends Filter {
             .setPlane(this._capNormal(), this.origin)
             .setFill(true)
             .setEdges(true)
-            .setInputData(this.input)
+            .setInputData(this.capInput ?? this.input)
             .getOutputData();
     }
 
@@ -41,7 +43,7 @@ export class ClipClosedSurfaceFilter extends Filter {
         return new CutterFilter()
             .setPlane(this._capNormal(), this.origin)
             .setFill(false)
-            .setInputData(this.input)
+            .setInputData(this.capInput ?? this.input)
             .getOutputData();
     }
 

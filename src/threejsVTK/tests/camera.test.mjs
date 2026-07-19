@@ -222,5 +222,50 @@ t("dispose dừng animation và gỡ listener", () => {
 });
 
 
+t("setFromThree accepts the fitted focal point instead of retaining the old origin", () => {
+  const c = mk();
+  const center = new THREE.Vector3(125, -40, 12);
+  c.three.position.copy(center).add(new THREE.Vector3(0, 0, 30));
+  c.three.lookAt(center);
+  c.three.updateMatrixWorld(true);
+  c.setFromThree(center);
+  assert.ok(c.state.target.distanceTo(center) < 1e-9);
+  assert.ok(Math.abs(c.getDistance() - 30) < 1e-9);
+});
+
+t("zoomFit keeps an off-origin model completely inside a wide viewport", () => {
+  const c = mk();
+  c.setAspect(2);
+  const box = new THREE.Box3(
+    new THREE.Vector3(100, -30, -8),
+    new THREE.Vector3(260, 50, 12),
+  );
+  c.zoomFit(box, 1.08, 0);
+  const center = box.getCenter(new THREE.Vector3());
+  assert.ok(c.state.target.distanceTo(center) < 1e-8, "focal point must equal model center");
+  for (let i = 0; i < 8; i++) {
+    const corner = new THREE.Vector3(
+      i & 1 ? box.max.x : box.min.x,
+      i & 2 ? box.max.y : box.min.y,
+      i & 4 ? box.max.z : box.min.z,
+    ).project(c.three);
+    assert.ok(Math.abs(corner.x) <= 1 + 1e-8, `corner ${i} exceeds horizontal viewport: ${corner.x}`);
+    assert.ok(Math.abs(corner.y) <= 1 + 1e-8, `corner ${i} exceeds vertical viewport: ${corner.y}`);
+  }
+});
+
+t("fitBounds atomically centers the supplied model bounds", () => {
+  const c = mk();
+  c.setAspect(2048 / 980);
+  const box = new THREE.Box3(
+    new THREE.Vector3(0, 0, -0.05),
+    new THREE.Vector3(2, 1, 0.051),
+  );
+  assert.equal(c.fitBounds(box, 1.06), true);
+  assert.ok(c.state.target.distanceTo(new THREE.Vector3(1, 0.5, 0.0005)) < 1e-8);
+  const projectedCenter = new THREE.Vector3(1, 0.5, 0.0005).project(c.three);
+  assert.ok(Math.hypot(projectedCenter.x, projectedCenter.y) < 1e-8);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail?1:0);

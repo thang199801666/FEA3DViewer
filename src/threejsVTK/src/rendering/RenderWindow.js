@@ -9,6 +9,8 @@ export class RenderWindow {
     container.appendChild(this.renderer.domElement);
 
     this.renderers = [];
+    this.afterRenderCallbacks = new Set();
+    this._rendering = false;
     this.interactor = null;
 
     this._running = false;
@@ -48,6 +50,9 @@ export class RenderWindow {
   }
 
   render() {
+    if (this._rendering) return;
+    this._rendering = true;
+    try {
     const { width, height } = this.getSize();
     this.renderer.setScissorTest(false);
     this.renderer.clear();
@@ -67,6 +72,15 @@ export class RenderWindow {
       ren.updateCameraAspect(vw / vh);
       this.renderer.render(ren.scene, ren.camera);
     }
+    for (const callback of this.afterRenderCallbacks) callback();
+    } finally {
+      this._rendering = false;
+    }
+  }
+
+  addAfterRenderCallback(callback) {
+    this.afterRenderCallbacks.add(callback);
+    return () => this.afterRenderCallbacks.delete(callback);
   }
 
   start() { 
@@ -84,6 +98,7 @@ export class RenderWindow {
     this.stop();
     window.removeEventListener('resize', this._onResize);
     this.interactor?.dispose();
+    this.afterRenderCallbacks.clear();
     this.renderer.dispose();
   }
 
@@ -95,6 +110,9 @@ export class RenderWindow {
 
   _onResize() {
     const { width, height } = this.getSize();
-    this.renderer.setSize(width, height, false);
+    // Keep the CSS canvas size in logical pixels while WebGLRenderer applies
+    // devicePixelRatio only to the drawing buffer. With `false`, a DPR=2
+    // canvas is displayed at twice the viewport size and gets clipped.
+    this.renderer.setSize(width, height, true);
   }
 }

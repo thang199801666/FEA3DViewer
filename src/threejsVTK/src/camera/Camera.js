@@ -170,7 +170,11 @@ export class Camera {
         if (this.onChange) this.onChange(this);
     }
 
-    syncFromThree() {
+    syncFromThree(focalPoint = null) {
+        if (focalPoint) {
+            if (focalPoint.isVector3) this.state.target.copy(focalPoint);
+            else if (Array.isArray(focalPoint)) this.state.target.set(...focalPoint);
+        }
         this._pullFromThree();
         return this;
     }
@@ -200,8 +204,8 @@ export class Camera {
         return this;
     }
 
-    setFromThree() {
-        return this.syncFromThree();
+    setFromThree(focalPoint = null) {
+        return this.syncFromThree(focalPoint);
     }
 
     getThreeCamera() {
@@ -328,6 +332,17 @@ export class Camera {
         return this;
     }
 
+    /**
+     * VTK-style dolly driven by vertical mouse movement.
+     * Negative deltaY (drag up) enlarges the model; positive deltaY shrinks it.
+     * The focal point stays fixed because this operation is never cursor-anchored.
+     */
+    dollyFromDrag(deltaY, speed = 1) {
+        const safeDelta = Number.isFinite(deltaY) ? deltaY : 0;
+        const safeSpeed = Number.isFinite(speed) ? speed : 1;
+        return this.dolly(Math.exp(-safeDelta * 0.01 * safeSpeed), null);
+    }
+
     getNDC(clientX, clientY, out = new THREE.Vector2()) {
         const r = this.domElement?.getBoundingClientRect?.();
         if (!r || !r.width || !r.height) return out.set(0, 0);
@@ -351,6 +366,18 @@ export class Camera {
         if (!res) return this;
         this.animation.animateTo(res.state, res.zoom, duration);
         return this;
+    }
+
+    /** Atomically fits bounds without animation or intermediate camera state. */
+    fitBounds(box, padding = 1.2) {
+        this.animation.stop();
+        const result = CameraMath.fitBox(this.state, this.three, box, padding);
+        if (!result) return false;
+        this.state.copy(result.state);
+        this.three.zoom = result.zoom;
+        this.three.updateProjectionMatrix();
+        this._afterStateChange();
+        return true;
     }
 
     setStandardView(name, duration = this.animationDuration) {

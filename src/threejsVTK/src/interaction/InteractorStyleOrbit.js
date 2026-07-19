@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { InteractorStyle } from "./InteractorStyle.js";
 import { InputStyleHandler } from "./InputStyleHandler.js";
-import { INTERACTION_ACTION, NAV_STATE as STATE, RUBBER_BAND_MODE } from "./constants.js";
+import { INTERACTION_ACTION, INTERACTION_MODE, NAV_STATE as STATE, RUBBER_BAND_MODE } from "./constants.js";
 
 export { RUBBER_BAND_MODE };
 
@@ -29,6 +29,7 @@ export class InteractorStyleOrbit extends InteractorStyle {
     this.enableZoomWindow = options.enableZoomWindow ?? true;
 
     this.inputHandler = new InputStyleHandler(options.navStyle);
+    this.interactionMode = INTERACTION_MODE.SELECT;
 
     this._state = STATE.NONE;
     this._lastClient = new THREE.Vector2();
@@ -86,6 +87,18 @@ export class InteractorStyleOrbit extends InteractorStyle {
     this.inputHandler.setStyle(style);
   }
 
+  setInteractionMode(mode = INTERACTION_MODE.SELECT) {
+    if (!Object.values(INTERACTION_MODE).includes(mode)) return this;
+    this._forceRelease();
+    this.interactionMode = mode;
+    if (this.domElement) this.domElement.style.cursor = this._cursorForMode(mode);
+    return this;
+  }
+
+  getInteractionMode() {
+    return this.interactionMode;
+  }
+
   setDamping(enabled) {
     this.enableDamping = enabled;
     if (!enabled) this._stopInertia();
@@ -127,13 +140,13 @@ export class InteractorStyleOrbit extends InteractorStyle {
       if (e.pointerType === 'touch') {
         this._state = STATE.TOUCH_ROTATE;
       } else {
-        this._state = this._actionToState(this.inputHandler.determineAction(e));
+        this._state = this._actionToState(this._determineAction(e));
         if (this._state === STATE.ZOOM_WINDOW) {
           this.marqueeStart.set(e.clientX, e.clientY);
           this.marqueeEnd.copy(this.marqueeStart);
         }
 
-        if (this._state === STATE.NONE && this.enableRubberBand && e.buttons === 1) {
+        if (this.interactionMode === INTERACTION_MODE.SELECT && this._state === STATE.NONE && this.enableRubberBand && e.buttons === 1) {
           this._rubberArmed = true;
           this._rubberStart.set(e.clientX, e.clientY);
           this._rubberEnd.copy(this._rubberStart);
@@ -227,7 +240,7 @@ export class InteractorStyleOrbit extends InteractorStyle {
 
     // Dynamic mapping adjustments for multi-button navigation styles (e.g., NX)
     if (e.pointerType !== 'touch' && this._pointers.size === 1 && (e.buttons & 1) === 0) {
-      const next = this._actionToState(this.inputHandler.determineAction(e));
+      const next = this._actionToState(this._determineAction(e));
       if (next !== this._state) {
         if (this._state === STATE.ZOOM_WINDOW && this.onMarqueeEnd) this.onMarqueeEnd();
         if (next === STATE.ZOOM_WINDOW) {
@@ -279,6 +292,12 @@ export class InteractorStyleOrbit extends InteractorStyle {
         this.panVelocity.set(dx, dy);
         this._lastMoveTime = performance.now();
         break;
+
+      case STATE.DOLLY: {
+        this.cadCamera.dollyFromDrag(dy, this.zoomSpeed);
+        this._lastMoveTime = performance.now();
+        break;
+      }
 
       case STATE.ZOOM_WINDOW:
         this.marqueeEnd.set(e.clientX, e.clientY);
@@ -350,6 +369,27 @@ export class InteractorStyleOrbit extends InteractorStyle {
 
   _pan(dx, dy) {
     this.cadCamera.pan(dx * this.panSpeed, dy * this.panSpeed);
+  }
+
+  _determineAction(event) {
+    if ((event.buttons & 1) === 0) return this.inputHandler.determineAction(event);
+    switch (this.interactionMode) {
+      case INTERACTION_MODE.PAN: return INTERACTION_ACTION.PAN;
+      case INTERACTION_MODE.ROTATE: return INTERACTION_ACTION.ROTATE;
+      case INTERACTION_MODE.ZOOM: return INTERACTION_ACTION.ZOOM_WINDOW;
+      case INTERACTION_MODE.DOLLY: return INTERACTION_ACTION.DOLLY;
+      default: return INTERACTION_ACTION.NONE;
+    }
+  }
+
+  _cursorForMode(mode) {
+    switch (mode) {
+      case INTERACTION_MODE.PAN: return 'grab';
+      case INTERACTION_MODE.ROTATE: return 'move';
+      case INTERACTION_MODE.ZOOM: return 'zoom-in';
+      case INTERACTION_MODE.DOLLY: return 'ns-resize';
+      default: return 'default';
+    }
   }
 
   _getRubberRect() {
@@ -518,6 +558,7 @@ export class InteractorStyleOrbit extends InteractorStyle {
       case INTERACTION_ACTION.ROTATE:      return STATE.ROTATE;
       case INTERACTION_ACTION.PAN:         return STATE.PAN;
       case INTERACTION_ACTION.ZOOM_WINDOW: return this.enableZoomWindow ? STATE.ZOOM_WINDOW : STATE.NONE;
+      case INTERACTION_ACTION.DOLLY:       return STATE.DOLLY;
       default:                             return STATE.NONE;
     }
   }

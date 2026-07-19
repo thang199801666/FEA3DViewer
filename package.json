@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "oxlint",
+    "lint": "oxlint && npm run verify:rendering-boundary",
+    "verify:rendering-boundary": "node tools/verify-rendering-boundary.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "earcut": "^3.2.3",
+    "pako": "^2.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1",
